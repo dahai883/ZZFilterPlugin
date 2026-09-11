@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import "ZZFilterURLProtocol.h"
 #import "ZZSettings.h"
+#import "ZZOverlayController.h"
 
 /// Public entry point for an authorized host application.
 /// The host should call this and use the returned configuration when
@@ -15,6 +16,7 @@ NSURLSessionConfiguration *ZZFilterMakeSessionConfiguration(void) {
 void ZZFilterSetEnabled(BOOL enabled) {
     ZZSettings.shared.enabled = enabled;
     [ZZSettings.shared save];
+    [[ZZOverlayController shared] refreshButton];
 }
 
 void ZZFilterSetTextRange(NSInteger minimum, NSInteger maximum) {
@@ -27,4 +29,11 @@ void ZZFilterSetVersionRange(NSString *minimum, NSString *maximum) {
     ZZSettings.shared.minimumVersion = minimum ?: @"";
     ZZSettings.shared.maximumVersion = maximum ?: @"";
     [ZZSettings.shared save];
+}
+
+__attribute__((constructor))
+static void ZZFilterPluginLoaded(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[ZZOverlayController shared] start];
+    });
 }

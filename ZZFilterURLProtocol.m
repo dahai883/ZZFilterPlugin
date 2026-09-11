@@ -1,9 +1,14 @@
-#import <objc/runtime.h>
+#import <os/log.h>
 #import "ZZFilterURLProtocol.h"
 #import "ZZProductFilter.h"
 #import "ZZSettings.h"
 
 static NSString * const kHandledKey = @"ZZFilterHandledRequest";
+
+@interface ZZFilterURLProtocol () <NSURLSessionDataDelegate>
+@property(nonatomic, strong) NSURLSessionDataTask *task;
+@property(nonatomic, strong) NSMutableData *responseData;
+@end
 
 @implementation ZZFilterURLProtocol
 
@@ -14,9 +19,7 @@ static NSString * const kHandledKey = @"ZZFilterHandledRequest";
     return YES;
 }
 
-+ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
-    return request;
-}
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request { return request; }
 
 + (void)installOnSessionConfiguration:(NSURLSessionConfiguration *)configuration {
     NSMutableArray *classes = [configuration.protocolClasses mutableCopy] ?: [NSMutableArray array];
@@ -37,13 +40,14 @@ static NSString * const kHandledKey = @"ZZFilterHandledRequest";
     filter.maximumVersion = settings.maximumVersion;
 
     BOOL changed = NO;
+    NSUInteger beforeCount = 0;
+    NSUInteger afterCount = 0;
 
     if ([root isKindOfClass:NSMutableDictionary.class]) {
         NSArray<NSString *> *candidateKeys = @[@"items", @"data", @"list", @"results"];
         for (NSString *key in candidateKeys) {
             id value = root[key];
             if (![value isKindOfClass:NSArray.class]) continue;
-
             NSArray *array = value;
             BOOL looksLikeProducts = NO;
             for (id item in array) {
@@ -56,8 +60,9 @@ static NSString * const kHandledKey = @"ZZFilterHandledRequest";
                 }
             }
             if (!looksLikeProducts) continue;
-
+            beforeCount = array.count;
             NSArray *filtered = [filter filteredProducts:array];
+            afterCount = filtered.count;
             if (filtered.count != array.count) {
                 root[key] = [filtered mutableCopy];
                 changed = YES;
@@ -66,12 +71,17 @@ static NSString * const kHandledKey = @"ZZFilterHandledRequest";
         }
     } else if ([root isKindOfClass:NSArray.class]) {
         NSArray *array = root;
+        beforeCount = array.count;
         NSArray *filtered = [filter filteredProducts:array];
+        afterCount = filtered.count;
         if (filtered.count != array.count) {
             root = [filtered mutableCopy];
             changed = YES;
         }
     }
+
+    os_log(OS_LOG_DEFAULT, "[ZZFilterURLProtocol] enabled=%{public}@ before=%lu after=%lu changed=%{public}@",
+           settings.enabled ? @"YES" : @"NO", (unsigned long)beforeCount, (unsigned long)afterCount, changed ? @"YES" : @"NO");
 
     if (!changed) return data;
     return [NSJSONSerialization dataWithJSONObject:root options:0 error:error];
@@ -80,50 +90,50 @@ static NSString * const kHandledKey = @"ZZFilterHandledRequest";
 - (void)startLoading {
     NSMutableURLRequest *request = [self.request mutableCopy];
     [NSURLProtocol setProperty:@YES forKey:kHandledKey inRequest:request];
+    self.responseData = [NSMutableData data];
 
-    NSURLSessionConfiguration *configuration =
-        [NSURLSessionConfiguration ephemeralSessionConfiguration];
-
-    NSURLSession *session =
-        [NSURLSession sessionWithConfiguration:configuration
-                                      delegate:(id<NSURLSessionDelegate>)self
-                                 delegateQueue:nil];
-
-    NSURLSessionDataTask *task =
-        [session dataTaskWithRequest:request];
-    objc_setAssociatedObject(self, @selector(startLoading), task, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    [task resume];
+    NSURLSessionConfiguration *configuration = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+    NSURLSession *session = [NSURLSession sessionWithConfiguration:configuration delegate:self delegateQueue:nil];
+    self.task = [session dataTaskWithRequest:request];
+    [self.task resume];
 }
 
 - (void)stopLoading {
-    NSURLSessionDataTask *task =
-        objc_getAssociatedObject(self, @selector(startLoading));
-    [task cancel];
+    [self.task cancel];
+    self.task = nil;
+    self.responseData = nil;
 }
 
-- (void)URLSession:(NSURLSession *)session
-          dataTask:(NSURLSessionDataTask *)dataTask
-didReceiveResponse:(NSURLResponse *)response
- completionHandler:(void (^)(NSURLSessionResponseDisposition disposition))completionHandler {
-    completionHandler(NSURLSessionResponseAllow);
+- (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask didReceiveResponse:(NSURLResponse *)response completionHandler:(void (^)(NSURLSessionResponseDisposition))completionHandler {
     [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
-}
-
-- (void)URLSession:(NSURLSession *)session
-          dataTask:(NSURLSessionDataTask *)dataTask
-    didReceiveData:(NSData *)data {
-    NSError *error = nil;
-    NSData *out = [self.class filteredJSONData:data error:&error];
-    if (!out) out = data;
-    [self.client URLProtocol:self didLoadData:out];
-}
-
-- (void)URLSession:(NSURLSession *)session
-              task:(NSURLSessionTask *)task
-didCompleteWithError:(NSError *)error {
-    [self.client URLProtocol:self didFailWithError:error];
-    if (!error) [self.client URLProtocolDidFinishLoading:self];
+    completionHandler(NSURLSessionResponseAllow);
     (void)session;
+    (void)dataTask;
+}
+
+- (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask didReceiveData:(NSData *)data {
+    [self.responseData appendData:data];
+    (void)session;
+    (void)dataTask;
+}
+
+- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
+    if (error) {
+        [self.client URLProtocol:self didFailWithError:error];
+    } else {
+        NSError *filterError = nil;
+        NSData *output = [self.class filteredJSONData:self.responseData error:&filterError];
+        if (!output) output = self.responseData ?: [NSData data];
+        [self.client URLProtocol:self didLoadData:output];
+        [self.client URLProtocolDidFinishLoading:self];
+        if (filterError) {
+            os_log(OS_LOG_DEFAULT, "[ZZFilterURLProtocol] JSON parse/filter error: %{public}@", filterError.localizedDescription);
+        }
+    }
+    self.task = nil;
+    self.responseData = nil;
+    (void)session;
+    (void)task;
 }
 
 @end

@@ -1,63 +1,27 @@
-# ZZFilterPlugin
+# ZZFilterPlugin — independent filter + overlay UI
 
-这是一个**独立实现**的 iOS 商品列表过滤 dylib 源码示例，目标是提供可审计、可修改的过滤逻辑。
+这是一个独立重实现的 iOS dylib 示例，用于你自己的或明确授权的宿主 App 测试。
 
-## 功能
+## 新增 ZZOverlayController
 
-- 开关过滤
-- 数值范围过滤
-- 版本范围过滤
-- 对 JSON 中常见的 `items` / `data` / `list` / `results` 数组进行过滤
-- 提供 `NSURLProtocol` 组件，可由**有权修改的宿主 App**显式加入自己的 `NSURLSessionConfiguration`
-- 不包含原插件的激活、授权校验、RSA 验签或绕过逻辑
+- 启动后在前台窗口显示一个小型“筛选”浮动按钮。
+- 点击按钮打开设置面板。
+- 可设置：启用/关闭、最小/最大数值、最低/最高版本。
+- 支持拖动浮动按钮。
+- 设置保存在 NSUserDefaults。
+- 不包含第三方 App 激活码、许可证验证、RSA 签名绕过或其他授权绕过逻辑。
 
-## 编译环境
+## 运行方式
 
-使用 GitHub Actions 的 macOS runner + Xcode/iPhoneOS SDK。
+宿主 App 应通过正常的动态库加载方式加载本 dylib，并自行调用 `ZZFilterMakeSessionConfiguration()` 后使用返回的 session configuration；网络协议不会自动替换宿主 App 未授权的网络栈。
 
-本项目要求：
-- iOS 16.0+
-- arm64 / arm64e
-- Objective-C ARC
+## 架构
 
-## GitHub Actions
+- iOS 16+
+- arm64 + arm64e
+- ARC
+- Foundation / CoreFoundation / UIKit
 
-仓库中的 `.github/workflows/build.yml` 会在手动触发后使用 macOS runner 编译。
+## Debug
 
-## 宿主 App 接入
-
-公开入口：
-
-```objc
-NSURLSessionConfiguration *cfg = ZZFilterMakeSessionConfiguration();
-NSURLSession *session = [NSURLSession sessionWithConfiguration:cfg];
-```
-
-或者：
-
-```objc
-[ZZFilterURLProtocol installOnSessionConfiguration:cfg];
-```
-
-然后按需要设置：
-
-```objc
-ZZFilterSetEnabled(YES);
-ZZFilterSetTextRange(100, 10000);
-ZZFilterSetVersionRange(@"2.0", @"5.0");
-```
-
-## 数据格式
-
-过滤器会优先寻找这些数组字段：
-
-- `items`
-- `data`
-- `list`
-- `results`
-
-数组元素如果包含 `id`、`productId`、`goodsId`、`title` 或 `name` 等字段，会被作为候选商品对象。
-
-### 注意
-
-真实 App 的接口 JSON 字段如果不同，需要根据你有权测试的 App 的实际数据结构调整解析器。不要把本项目用于绕过第三方 App 的授权、访问控制或安全机制。
+编译使用 `-DZZ_DEBUG=1 -g -O0 -fno-omit-frame-pointer`。`ZZOverlayController` 的按钮本身也可作为最直观的加载验证：如果在授权测试宿主中出现“筛选”按钮，说明 dylib 的初始化代码已经执行。

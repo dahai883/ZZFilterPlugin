@@ -1,10 +1,10 @@
 SDKROOT := $(shell xcrun --sdk iphoneos --show-sdk-path)
 CLANG := xcrun --sdk iphoneos clang
 ARCHS := -arch arm64 -arch arm64e
-CFLAGS := -fobjc-arc -isysroot $(SDKROOT) -miphoneos-version-min=16.0 $(ARCHS) -Wall -Wextra
-LDFLAGS := -dynamiclib $(ARCHS) -framework Foundation -framework CoreFoundation
+CFLAGS := -fobjc-arc -isysroot $(SDKROOT) -miphoneos-version-min=16.0 $(ARCHS) -Wall -Wextra -DZZ_DEBUG=1 -g -O0 -fno-omit-frame-pointer
+LDFLAGS := -dynamiclib $(ARCHS) -framework Foundation -framework CoreFoundation -framework UIKit
 
-SOURCES := ZZFilterPlugin.m ZZFilterURLProtocol.m ZZProductFilter.m ZZDetailFetcher.m ZZSettings.m
+SOURCES := ZZFilterPlugin.m ZZFilterURLProtocol.m ZZProductFilter.m ZZDetailFetcher.m ZZSettings.m ZZOverlayController.m ZZDebug.m
 OBJECTS := $(SOURCES:.m=.o)
 
 all: ZZFilterPlugin.dylib
