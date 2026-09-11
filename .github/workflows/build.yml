@@ -1,0 +1,33 @@
+name: Build iOS dylib
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Show SDK
+        run: xcrun --sdk iphoneos --show-sdk-path
+
+      - name: Build
+        run: make
+
+      - name: Prepare output
+        run: |
+          mkdir -p output
+          cp *.dylib output/
+          cp README.md output/ || true
+
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZZFilterPlugin
+          path: output/
