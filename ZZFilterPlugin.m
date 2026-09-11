@@ -33,7 +33,11 @@ void ZZFilterSetVersionRange(NSString *minimum, NSString *maximum) {
 
 __attribute__((constructor))
 static void ZZFilterPluginLoaded(void) {
+    NSLog(@"[ZZOverlay] CONSTRUCTOR CALLED");
+    // Keep constructor work minimal. UI setup is deferred to the main queue;
+    // ZZOverlayBootstrap +load provides a second initialization path.
     dispatch_async(dispatch_get_main_queue(), ^{
+        NSLog(@"[ZZOverlay] constructor main-queue callback");
         [[ZZOverlayController shared] start];
     });
 }
