@@ -48,7 +48,7 @@ static NSComparisonResult ZZCompareVersions(NSString *a, NSString *b) {
 static NSString *ZZFirstString(NSDictionary *d, NSArray<NSString *> *keys) {
     for (NSString *key in keys) {
         id value = d[key];
-        if ([value isKindOfClass:NSString.class] && value.length > 0) return value;
+        if ([value isKindOfClass:NSString.class] && [(NSString *)value length] > 0) return value;
         if ([value respondsToSelector:@selector(stringValue)]) {
             NSString *s = [value stringValue];
             if (s.length > 0) return s;

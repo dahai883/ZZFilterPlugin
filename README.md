@@ -49,3 +49,7 @@ This is intended for debugging an authorized host/application integration; it do
 The project now mirrors the **observable architecture** of the supplied reference binary: automatic `NSURLSessionConfiguration` interception, a `ZZProductVisibility` cache/model layer, and exported model/list filtering helpers (`ZZProductIDFromInfo`, `ZZShouldKeepModel`, `ZZFilteredModels`, `ZZFilterRenderedData`).
 
 The implementation is an independent reimplementation and intentionally does not copy or implement the reference binary's activation, token, signature-verification, or licensing mechanisms.
+
+
+### Xcode 15.x compatibility fix
+`ZZProductFilter.m` now avoids dot-syntax `value.length` on a variable declared as `id`, which Xcode reports as `property 'length' not found on object of type '__strong id'`.
