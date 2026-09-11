@@ -36,8 +36,9 @@ static NSComparisonResult ZZCompareVersions(NSString *a, NSString *b) {
     NSArray *aa = ZZVersionComponents(a);
     NSArray *bb = ZZVersionComponents(b);
     for (NSUInteger i = 0; i < MAX(aa.count, bb.count); i++) {
-        NSInteger av = i < aa.count ? aa[i].integerValue : 0;
-        NSInteger bv = i < bb.count ? bb[i].integerValue : 0;
+NSInteger av = i < aa.count ? [aa[i] integerValue] : 0;
+NSInteger bv = i < bb.count ? [bb[i] integerValue] : 0;
+
         if (av < bv) return NSOrderedAscending;
         if (av > bv) return NSOrderedDescending;
     }
