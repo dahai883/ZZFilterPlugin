@@ -37,3 +37,15 @@ Workflow 会：
 5. 同时上传单独的 `.dylib` Artifact 和完整 `ZZOverlayController-Debug.zip` Artifact。
 
 运行成功后，在该次 Actions 运行页面底部的 **Artifacts** 下载即可。
+
+## Reference-inspired network debugging
+
+The reference binary contains an automatic `NSURLSessionConfiguration` interception layer in addition to its overlay. This build adds an independent, public-runtime implementation that automatically installs `ZZFilterURLProtocol` on the standard default/ephemeral session configurations. It also logs intercepted requests and whether a JSON product array was found and modified.
+
+This is intended for debugging an authorized host/application integration; it does not implement activation, license, RSA, or authorization bypass logic.
+
+## Reference-architecture update
+
+The project now mirrors the **observable architecture** of the supplied reference binary: automatic `NSURLSessionConfiguration` interception, a `ZZProductVisibility` cache/model layer, and exported model/list filtering helpers (`ZZProductIDFromInfo`, `ZZShouldKeepModel`, `ZZFilteredModels`, `ZZFilterRenderedData`).
+
+The implementation is an independent reimplementation and intentionally does not copy or implement the reference binary's activation, token, signature-verification, or licensing mechanisms.

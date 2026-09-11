@@ -18,8 +18,8 @@ static NSInteger ZZNumberFromString(NSString *value) {
     if (![value isKindOfClass:NSString.class]) return 0;
     NSScanner *scanner = [NSScanner scannerWithString:value];
     NSInteger number = 0;
-    [scanner scanInteger:&number];
-    return number;
+    if ([scanner scanInteger:&number]) return number;
+    return 0;
 }
 
 static NSArray<NSNumber *> *ZZVersionComponents(NSString *value) {
@@ -35,7 +35,8 @@ static NSArray<NSNumber *> *ZZVersionComponents(NSString *value) {
 static NSComparisonResult ZZCompareVersions(NSString *a, NSString *b) {
     NSArray *aa = ZZVersionComponents(a);
     NSArray *bb = ZZVersionComponents(b);
-    for (NSUInteger i = 0; i < MAX(aa.count, bb.count); i++) {
+    NSUInteger count = MAX(aa.count, bb.count);
+    for (NSUInteger i = 0; i < count; i++) {
         NSInteger av = i < aa.count ? [aa[i] integerValue] : 0;
         NSInteger bv = i < bb.count ? [bb[i] integerValue] : 0;
         if (av < bv) return NSOrderedAscending;
@@ -47,52 +48,57 @@ static NSComparisonResult ZZCompareVersions(NSString *a, NSString *b) {
 static NSString *ZZFirstString(NSDictionary *d, NSArray<NSString *> *keys) {
     for (NSString *key in keys) {
         id value = d[key];
-        if ([value isKindOfClass:NSString.class] && [value length] > 0) return value;
-        if ([value respondsToSelector:@selector(stringValue)]) return [value stringValue];
+        if ([value isKindOfClass:NSString.class] && value.length > 0) return value;
+        if ([value respondsToSelector:@selector(stringValue)]) {
+            NSString *s = [value stringValue];
+            if (s.length > 0) return s;
+        }
     }
     return @"";
+}
+
+static NSInteger ZZNumberFromProduct(NSDictionary *product) {
+    // Prefer explicit price/amount fields. This avoids interpreting a model
+    // number such as "iPhone 15 Pro Max" as the numeric filter value.
+    NSArray *priceKeys = @[@"price", @"sellPrice", @"salePrice", @"currentPrice",
+                           @"amount", @"saleAmount", @"finalPrice", @"lowestPrice"];
+    for (NSString *key in priceKeys) {
+        id value = product[key];
+        if ([value respondsToSelector:@selector(stringValue)]) {
+            NSInteger n = ZZNumberFromString([value stringValue]);
+            if (n > 0) return n;
+        }
+    }
+    NSString *text = ZZFirstString(product, @[@"text", @"name", @"title"]);
+    return ZZNumberFromString(text);
 }
 
 - (BOOL)shouldDisplayProduct:(NSDictionary *)product {
     if (!self.enabled) return YES;
     if (![product isKindOfClass:NSDictionary.class]) return YES;
 
-    NSString *textValue = ZZFirstString(product, @[
-        @"text", @"name", @"title", @"price", @"minimumText", @"maximumText"
-    ]);
-    NSInteger numericText = ZZNumberFromString(textValue);
-
-    if (self.minimumText > 0 && numericText > 0 && numericText < self.minimumText) {
-        return NO;
-    }
-    if (self.maximumText < NSIntegerMax && numericText > 0 && numericText > self.maximumText) {
-        return NO;
-    }
+    NSInteger numericValue = ZZNumberFromProduct(product);
+    if (self.minimumText > 0 && numericValue > 0 && numericValue < self.minimumText) return NO;
+    if (self.maximumText < NSIntegerMax && numericValue > 0 && numericValue > self.maximumText) return NO;
 
     NSString *version = ZZFirstString(product, @[
-        @"version", @"modelVersion", @"goodsVersion", @"waresVersion"
+        @"version", @"modelVersion", @"goodsVersion", @"waresVersion", @"iosVersion", @"systemVersion"
     ]);
-
     if (version.length > 0) {
         if (self.minimumVersion.length > 0 &&
-            ZZCompareVersions(version, self.minimumVersion) == NSOrderedAscending) {
-            return NO;
-        }
+            ZZCompareVersions(version, self.minimumVersion) == NSOrderedAscending) return NO;
         if (self.maximumVersion.length > 0 &&
-            ZZCompareVersions(version, self.maximumVersion) == NSOrderedDescending) {
-            return NO;
-        }
+            ZZCompareVersions(version, self.maximumVersion) == NSOrderedDescending) return NO;
     }
-
     return YES;
 }
 
 - (NSArray<NSDictionary *> *)filteredProducts:(NSArray<NSDictionary *> *)products {
     if (!self.enabled) return products ?: @[];
-    NSMutableArray *result = [NSMutableArray array];
+    NSMutableArray *result = [NSMutableArray arrayWithCapacity:products.count];
     for (id obj in products ?: @[]) {
-        if ([obj isKindOfClass:NSDictionary.class] && [self shouldDisplayProduct:obj]) {
-            [result addObject:obj];
+        if (![obj isKindOfClass:NSDictionary.class] || [self shouldDisplayProduct:obj]) {
+            if ([obj isKindOfClass:NSDictionary.class]) [result addObject:obj];
         }
     }
     return result;
