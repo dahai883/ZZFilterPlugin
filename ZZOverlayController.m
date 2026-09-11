@@ -1,25 +1,18 @@
 #import "ZZOverlayController.h"
 #import "ZZSettings.h"
-#import <os/log.h>
+// Keep debug logging compatible with the iOS 17.5 SDK.
+// os_log's format argument must be a compile-time constant; forwarding a
+// variadic Objective-C format through a macro can trigger OS_LOG_STRING
+// static-assert errors. NSLog is sufficient for this diagnostic build.
 
 static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
-static os_log_t ZZOverlayLog(void) {
-    static os_log_t log;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        log = os_log_create("com.zzfilterplugin", "overlay");
-    });
-    return log;
-}
 
 #define ZZOverlayLogInfo(fmt, ...) do { \
     NSLog(@"[ZZOverlay] " fmt, ##__VA_ARGS__); \
-    os_log_info(ZZOverlayLog(), fmt, ##__VA_ARGS__); \
 } while (0)
 
 #define ZZOverlayLogError(fmt, ...) do { \
     NSLog(@"[ZZOverlay][ERROR] " fmt, ##__VA_ARGS__); \
-    os_log_error(ZZOverlayLog(), fmt, ##__VA_ARGS__); \
 } while (0)
 
 @interface ZZOverlayController ()
