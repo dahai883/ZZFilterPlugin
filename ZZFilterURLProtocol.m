@@ -156,7 +156,7 @@ static BOOL ZZReplaceFirstProductArray(id root, NSArray *filtered) {
     NSURLSession *session = [NSURLSession sessionWithConfiguration:configuration delegate:self delegateQueue:nil];
     self.task = [session dataTaskWithRequest:request];
     ZZNetworkInterceptedCount += 1;
-    NSString *url = request.URL;
+    NSURL *url = request.URL;
     NSString *host = url.host ?: @"";
     NSString *path = url.path ?: @"/";
     NSLog(@"[ZZFilterNetwork] INTERCEPT request %@ %@", request.HTTPMethod ?: @"GET", url.absoluteString);
