@@ -9,16 +9,25 @@ static os_log_t ZZDebugLog(void) {
     return log;
 }
 
+// os_log_t is an opaque C type and cannot be used with @synchronized.
+// Keep a real Objective-C object as the file-write lock instead.
+static NSObject *ZZDebugFileLock(void) {
+    static NSObject *lock;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ lock = [NSObject new]; });
+    return lock;
+}
+
 NSString *ZZFilterDebugLogPath(void) {
     static NSString *path;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        NSString *primary = @"/var/mobile/ZZFilterPlugin-v9.log";
+        NSString *primary = @"/var/mobile/ZZFilterPlugin-v11.log";
         NSString *dir = [primary stringByDeletingLastPathComponent];
         BOOL ok = [[NSFileManager defaultManager] fileExistsAtPath:dir] ||
                   [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
         if (ok && [[NSFileManager defaultManager] isWritableFileAtPath:dir]) path = primary;
-        else path = @"/tmp/ZZFilterPlugin-v9.log";
+        else path = @"/tmp/ZZFilterPlugin-v11.log";
         if (![[NSFileManager defaultManager] fileExistsAtPath:path])
             [[NSData data] writeToFile:path atomically:YES];
     });
@@ -32,7 +41,7 @@ void ZZFilterDebugWrite(NSString *format, ...) {
     NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
     va_end(args);
     NSString *line = [NSString stringWithFormat:@"%@ %@\n", [NSDate date], message];
-    @synchronized (ZZDebugLog) {
+    @synchronized (ZZDebugFileLock()) {
         NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:ZZFilterDebugLogPath()];
         if (fh) {
             [fh seekToEndOfFile];
@@ -51,5 +60,5 @@ void ZZFilterDebugLogBuildInfo(void) {
 #else
     const char *arch = "unknown";
 #endif
-    ZZFilterDebugWrite(@"[ZZDebug] v9 loaded arch=%s iOS-min=16.0 log=%@", arch, ZZFilterDebugLogPath());
+    ZZFilterDebugWrite(@"[ZZDebug] v11 loaded arch=%s iOS-min=16.0 log=%@", arch, ZZFilterDebugLogPath());
 }
