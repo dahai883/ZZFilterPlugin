@@ -1,6 +1,7 @@
 #import "ZZFilterURLProtocol.h"
 #import "ZZProductFilter.h"
 #import "ZZSettings.h"
+#import "ZZDebug.h"
 
 static NSString * const kHandledKey = @"ZZFilterHandledRequest";
 static NSUInteger ZZNetworkInterceptedCount;
@@ -117,6 +118,7 @@ static BOOL ZZReplaceFirstProductArray(id root, NSArray *filtered) {
     NSArray *products = ZZFindProductArray(root, &path);
     if (!products) {
         NSLog(@"[ZZFilterNetwork] JSON received but no product array found bytes=%lu", (unsigned long)data.length);
+        ZZFilterDebugWrite(@"[ZZFilterNetwork] JSON no-product-array bytes=%lu", (unsigned long)data.length);
         return data;
     }
 
@@ -133,6 +135,10 @@ static BOOL ZZReplaceFirstProductArray(id root, NSArray *filtered) {
           path ?: @"?", (unsigned long)products.count, (unsigned long)filtered.count,
           (long)settings.minimumText, (long)settings.maximumText,
           settings.minimumVersion, settings.maximumVersion);
+    ZZFilterDebugWrite(@"[ZZFilterNetwork] product-array path=%@ before=%lu after=%lu min=%ld max=%ld minVer=%@ maxVer=%@",
+                       path ?: @"?", (unsigned long)products.count, (unsigned long)filtered.count,
+                       (long)settings.minimumText, (long)settings.maximumText,
+                       settings.minimumVersion ?: @"", settings.maximumVersion ?: @"");
 
     if (filtered.count == products.count) return data;
     if (!ZZReplaceFirstProductArray(root, filtered)) return data;
@@ -150,7 +156,11 @@ static BOOL ZZReplaceFirstProductArray(id root, NSArray *filtered) {
     NSURLSession *session = [NSURLSession sessionWithConfiguration:configuration delegate:self delegateQueue:nil];
     self.task = [session dataTaskWithRequest:request];
     ZZNetworkInterceptedCount += 1;
-    NSLog(@"[ZZFilterNetwork] INTERCEPT request %@ %@", request.HTTPMethod ?: @"GET", request.URL.absoluteString);
+    NSString *url = request.URL;
+    NSString *host = url.host ?: @"";
+    NSString *path = url.path ?: @"/";
+    NSLog(@"[ZZFilterNetwork] INTERCEPT request %@ %@", request.HTTPMethod ?: @"GET", url.absoluteString);
+    ZZFilterDebugWrite(@"[ZZFilterNetwork] INTERCEPT %@ host=%@ path=%@", request.HTTPMethod ?: @"GET", host, path);
     [self.task resume];
 }
 
@@ -204,7 +214,10 @@ static BOOL ZZReplaceFirstProductArray(id root, NSArray *filtered) {
         [self.client URLProtocolDidFinishLoading:self];
         NSLog(@"[ZZFilterNetwork] COMPLETE modified=%@ bytes=%lu->%lu",
               modified ? @"YES" : @"NO", (unsigned long)original.length, (unsigned long)output.length);
-        if (filterError) NSLog(@"[ZZFilterNetwork] JSON error %@", filterError.localizedDescription);
+        if (filterError) {
+            NSLog(@"[ZZFilterNetwork] JSON error %@", filterError.localizedDescription);
+            ZZFilterDebugWrite(@"[ZZFilterNetwork] JSON error %@", filterError.localizedDescription);
+        }
     }
     self.task = nil;
     self.responseData = nil;

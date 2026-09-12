@@ -4,6 +4,7 @@
 #import "ZZOverlayController.h"
 #import "ZZNetworkInterception.h"
 #import "ZZRuntimeFiltering.h"
+#import "ZZDebug.h"
 
 /// Public entry point for an authorized host application.
 /// The host should call this and use the returned configuration when
@@ -37,7 +38,8 @@ void ZZInstallUIFiltering(void);
 
 __attribute__((constructor))
 static void ZZFilterPluginLoaded(void) {
-    NSLog(@"[ZZOverlay] CONSTRUCTOR CALLED");
+    ZZFilterDebugLogBuildInfo();
+    ZZFilterDebugWrite(@"[ZZPlugin] constructor called");
     ZZInstallNetworkInterception();
     ZZInstallUIFiltering();
     ZZInstallRuntimeFiltering();
@@ -49,7 +51,7 @@ static void ZZFilterPluginLoaded(void) {
     // Keep constructor work minimal. UI setup is deferred to the main queue;
     // ZZOverlayBootstrap +load provides a second initialization path.
     dispatch_async(dispatch_get_main_queue(), ^{
-        NSLog(@"[ZZOverlay] constructor main-queue callback");
+        ZZFilterDebugWrite(@"[ZZPlugin] constructor main-queue callback");
         [[ZZOverlayController shared] start];
     });
 }
@@ -57,7 +59,7 @@ static void ZZFilterPluginLoaded(void) {
 /// Reference-architecture entry points for independent model/list filtering.
 /// These are intentionally activation-free.
 void ZZInstallUIFiltering(void) {
-    NSLog(@"[ZZFilterUI] UI filtering layer initialized");
+    ZZFilterDebugWrite(@"[ZZFilterUI] UI filtering layer initialized");
     ZZInstallRuntimeFiltering();
 }
 

@@ -1,6 +1,7 @@
 #import "ZZRuntimeFiltering.h"
 #import "ZZProductVisibility.h"
 #import "ZZSettings.h"
+#import "ZZDebug.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <dlfcn.h>
@@ -18,6 +19,34 @@ static NSUInteger ZZRuntimeHookFailures;
 static NSUInteger ZZRuntimeLastClassCount;
 static NSUInteger ZZRuntimeLastMethodCount;
 static NSString *ZZRuntimeLastSummary = @"尚未扫描";
+static NSMutableArray<NSString *> *ZZRuntimeCandidates;
+static NSUInteger ZZRuntimeCandidateTotal;
+
+static NSInteger ZZCandidateScore(NSString *className, NSString *selectorName) {
+    NSString *c = className.lowercaseString;
+    NSString *s = selectorName.lowercaseString;
+    NSInteger score = 0;
+    NSArray *tokens = @[@"cell", @"model", @"goods", @"product", @"listing", @"list", @"feed", @"search", @"response", @"request", @"section", @"item"];
+    for (NSString *token in tokens) {
+        if ([s containsString:token]) score += 2;
+        if ([c containsString:token]) score += 1;
+    }
+    if ([s containsString:@"add"] || [s containsString:@"insert"] || [s containsString:@"reload"]) score += 2;
+    return score;
+}
+
+static void ZZRecordRuntimeCandidates(Class cls, Method method) {
+    NSString *className = NSStringFromClass(cls);
+    NSString *selectorName = NSStringFromSelector(method_getName(method));
+    NSInteger score = ZZCandidateScore(className, selectorName);
+    if (score < 6) return;
+    ZZRuntimeMatchedMethods += 0; // keep the exact-hook counter semantics unchanged
+    ZZRuntimeCandidateTotal += 1;
+    if (ZZRuntimeCandidates.count >= 40) return;
+    NSString *entry = [NSString stringWithFormat:@"score=%ld %@ %@ types=%s",
+                       (long)score, className, selectorName, method_getTypeEncoding(method) ?: "?"];
+    [ZZRuntimeCandidates addObject:entry];
+}
 
 static BOOL ZZLooksLikeModelArray(id obj) {
     if (![obj isKindOfClass:NSArray.class]) return NO;
@@ -35,6 +64,7 @@ static BOOL ZZLooksLikeModelArray(id obj) {
 
 static void ZZFilterInvocationArguments(NSInvocation *invocation) {
     ZZRuntimeCalls += 1;
+    ZZFilterDebugWrite(@"[ZZFilterUI] runtime call selector=%@ args=%lu", NSStringFromSelector(invocation.selector), (unsigned long)invocation.methodSignature.numberOfArguments);
     if (!ZZSettings.shared.enabled) return;
     const char *types = invocation.methodSignature.methodReturnType;
     (void)types;
@@ -53,6 +83,9 @@ static void ZZFilterInvocationArguments(NSInvocation *invocation) {
                 NSLog(@"[ZZFilterUI] runtime selector=%@ array=%lu -> %lu",
                       NSStringFromSelector(invocation.selector),
                       (unsigned long)[value count], (unsigned long)[filtered count]);
+                ZZFilterDebugWrite(@"[ZZFilterUI] runtime filtered selector=%@ array=%lu->%lu",
+                                   NSStringFromSelector(invocation.selector),
+                                   (unsigned long)[value count], (unsigned long)[filtered count]);
             }
             break;
         }
@@ -165,12 +198,19 @@ NSUInteger ZZRuntimeFilteringCalls(void) {
     return ZZRuntimeCalls;
 }
 
+NSUInteger ZZRuntimeCandidateCount(void) { return ZZRuntimeCandidateTotal; }
+NSString *ZZRuntimeDiagnosticSummary(void) { return ZZRuntimeLastSummary ?: @""; }
+
 void ZZInstallRuntimeFiltering(void) {
     static dispatch_once_t initOnce;
     dispatch_once(&initOnce, ^{
         ZZOriginalForwardIMPs = [NSMutableDictionary dictionary];
         ZZHookedSelectors = [NSMutableSet set];
+        ZZRuntimeCandidates = [NSMutableArray array];
     });
+
+    ZZRuntimeCandidateTotal = 0;
+    [ZZRuntimeCandidates removeAllObjects];
 
     NSArray<NSString *> *selectors = @[
         @"addCellsWithModelArray:forSection:className:",
@@ -212,6 +252,7 @@ void ZZInstallRuntimeFiltering(void) {
             for (unsigned int m = 0; m < count; m++) {
                 SEL implemented = method_getName(methods[m]);
                 NSString *name = NSStringFromSelector(implemented);
+                ZZRecordRuntimeCandidates(cls, methods[m]);
                 if (![selectors containsObject:name]) continue;
                 classMatched = YES;
                 matchedMethods += 1;
@@ -238,5 +279,9 @@ void ZZInstallRuntimeFiltering(void) {
                             (unsigned long)ZZRuntimeHookFailures,
                             (unsigned long)ZZHookedSelectors.count];
     NSLog(@"[ZZFilterUI] runtime discovery: %@", ZZRuntimeLastSummary);
+    ZZFilterDebugWrite(@"[ZZFilterUI] runtime discovery: %@", ZZRuntimeLastSummary);
+    for (NSString *candidate in ZZRuntimeCandidates) {
+        ZZFilterDebugWrite(@"[ZZFilterUI] candidate %@", candidate);
+    }
 }
 

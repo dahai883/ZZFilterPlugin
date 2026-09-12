@@ -313,11 +313,13 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     NSUInteger hidden = ZZFilterModelsHiddenCount();
     NSUInteger network = ZZNetworkInterceptedRequests();
     NSUInteger modified = ZZNetworkModifiedResponses();
+    NSUInteger candidates = ZZRuntimeCandidateCount();
     return [NSString stringWithFormat:
-            @"插件：已加载\nUI Hook：%lu\nUI 调用：%lu\n处理商品：%lu\n隐藏商品：%lu\n网络拦截：%lu\n修改响应：%lu",
+            @"插件：已加载\nUI Hook：%lu\nUI 调用：%lu\n处理商品：%lu\n隐藏商品：%lu\n网络拦截：%lu\n修改响应：%lu\n运行时候选：%lu\n\n%@",
             (unsigned long)hooks, (unsigned long)calls,
             (unsigned long)processed, (unsigned long)hidden,
-            (unsigned long)network, (unsigned long)modified];
+            (unsigned long)network, (unsigned long)modified,
+            (unsigned long)candidates, ZZRuntimeDiagnosticSummary()];
 }
 
 - (void)showDiagnosticsFrom:(UIViewController *)vc {
