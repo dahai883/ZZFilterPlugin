@@ -18,3 +18,6 @@ Long-press the floating button for:
 - modified response count
 
 This is intended for debugging an authorized host/application integration.
+
+## Dynamic runtime discovery
+This diagnostic build no longer depends on two hard-coded controller class names. It scans the running authorized host for the known list-rendering selectors and reports discovered/hooked counts. This helps distinguish a class-name mismatch from a real absence of the list-rendering API.

@@ -41,6 +41,11 @@ static void ZZFilterPluginLoaded(void) {
     ZZInstallNetworkInterception();
     ZZInstallUIFiltering();
     ZZInstallRuntimeFiltering();
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(__unused NSTimer *timer) {
+            ZZInstallRuntimeFiltering();
+        }];
+    });
     // Keep constructor work minimal. UI setup is deferred to the main queue;
     // ZZOverlayBootstrap +load provides a second initialization path.
     dispatch_async(dispatch_get_main_queue(), ^{

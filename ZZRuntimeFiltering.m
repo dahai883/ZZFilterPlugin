@@ -121,39 +121,60 @@ NSUInteger ZZRuntimeFilteringCalls(void) {
 }
 
 void ZZInstallRuntimeFiltering(void) {
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
+    static dispatch_once_t initOnce;
+    dispatch_once(&initOnce, ^{
         ZZOriginalForwardIMPs = [NSMutableDictionary dictionary];
         ZZHookedSelectors = [NSMutableSet set];
-
-        NSArray<NSString *> *classNames = @[
-            @"ZZFlexibleLayoutViewController",
-            @"ZZListingAprilViewController"
-        ];
-        NSArray<NSString *> *selectors = @[
-            @"addCellsWithModelArray:forSection:className:",
-            @"addCellsWithModelArray:forSection:className:tag:",
-            @"insertCellsWithModelArray:forSection:className:pos:",
-            @"insertCellsWithModelArray:forSection:className:tag:pos:",
-            @"p_addCellsWithModelArray:forSection:className:tag:",
-            @"p_insertCellsWithModelArray:forSection:className:tag:pos:",
-            @"addListingGoodsWithRespModel:",
-            @"reloadListingGoodsWithRespModel:"
-        ];
-
-        NSUInteger hooked = 0;
-        for (NSString *name in classNames) {
-            Class cls = NSClassFromString(name);
-            if (!cls) continue;
-            for (NSString *selName in selectors) {
-                SEL sel = NSSelectorFromString(selName);
-                Method m = class_getInstanceMethod(cls, sel);
-                if (m) {
-                    ZZHookSelector(cls, sel);
-                    hooked++;
-                }
-            }
-        }
-        NSLog(@"[ZZFilterUI] runtime filtering ready; hooked=%lu", (unsigned long)hooked);
     });
+
+    // The reference build exposes these list-rendering selectors.  Instead of
+    // assuming a particular controller class name, discover classes that
+    // actually implement the selectors in the running, authorized host.
+    NSArray<NSString *> *selectors = @[
+        @"addCellsWithModelArray:forSection:className:",
+        @"addCellsWithModelArray:forSection:className:tag:",
+        @"insertCellsWithModelArray:forSection:className:pos:",
+        @"insertCellsWithModelArray:forSection:className:tag:pos:",
+        @"p_addCellsWithModelArray:forSection:className:tag:",
+        @"p_insertCellsWithModelArray:forSection:className:tag:pos:",
+        @"addListingGoodsWithRespModel:",
+        @"reloadListingGoodsWithRespModel:"
+    ];
+
+    int classCount = objc_getClassList(NULL, 0);
+    if (classCount <= 0) {
+        NSLog(@"[ZZFilterUI] runtime discovery: no classes yet");
+        return;
+    }
+
+    Class *classes = (__unsafe_unretained Class *)calloc((size_t)classCount, sizeof(Class));
+    int actual = objc_getClassList(classes, classCount);
+    NSUInteger discovered = 0;
+    NSUInteger newlyHooked = 0;
+
+    for (int i = 0; i < actual; i++) {
+        Class cls = classes[i];
+        if (!cls) continue;
+
+        unsigned int methodCount = 0;
+        Method *methods = class_copyMethodList(cls, &methodCount);
+        if (!methods) continue;
+
+        for (unsigned int m = 0; m < methodCount; m++) {
+            SEL implemented = method_getName(methods[m]);
+            NSString *name = NSStringFromSelector(implemented);
+            if (![selectors containsObject:name]) continue;
+            discovered++;
+
+            NSUInteger before = ZZHookedSelectors.count;
+            ZZHookSelector(cls, implemented);
+            if (ZZHookedSelectors.count > before) newlyHooked++;
+        }
+        free(methods);
+    }
+    free(classes);
+
+    NSLog(@"[ZZFilterUI] runtime discovery: classes=%d methods=%lu newlyHooked=%lu totalHooked=%lu",
+          actual, (unsigned long)discovered, (unsigned long)newlyHooked,
+          (unsigned long)ZZHookedSelectors.count);
 }
