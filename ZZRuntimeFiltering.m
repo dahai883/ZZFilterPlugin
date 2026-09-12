@@ -11,6 +11,10 @@ static NSUInteger ZZHookFailures;
 static NSUInteger ZZLastScannedClasses;
 static NSUInteger ZZLastScannedMethods;
 static CFTimeInterval ZZLastScanTime;
+static NSUInteger ZZResponseObjects;
+static NSUInteger ZZResponseArrays;
+static NSUInteger ZZResponseDictionaries;
+static NSUInteger ZZResponseUnknown;
 
 static NSArray *ZZFilteredArray(NSArray *models, NSString *selectorName) {
     ZZRuntimeCalls += 1;
@@ -78,6 +82,16 @@ static IMP ZZMakeListingResponse(IMP original) {
         // The response object may itself expose a product/model array. Keep
         // this hook observational unless ZZFilterRenderedData can recognize
         // the concrete shape; the normal model-array hooks do the filtering.
+        ZZResponseObjects += 1;
+        if ([response isKindOfClass:NSArray.class]) ZZResponseArrays += 1;
+        else if ([response isKindOfClass:NSDictionary.class]) ZZResponseDictionaries += 1;
+        else ZZResponseUnknown += 1;
+        NSLog(@"[ZZFilterUI] response hook selector=addListingGoodsWithRespModel class=%@", response ? NSStringFromClass([response class]) : @"(nil)");
+        ZZResponseObjects += 1;
+        if ([response isKindOfClass:NSArray.class]) ZZResponseArrays += 1;
+        else if ([response isKindOfClass:NSDictionary.class]) ZZResponseDictionaries += 1;
+        else ZZResponseUnknown += 1;
+        NSLog(@"[ZZFilterUI] response hook selector=reloadListingGoodsWithRespModel class=%@", response ? NSStringFromClass([response class]) : @"(nil)");
         id value = response;
         id filtered = ZZFilterRenderedData(value);
         if (filtered && filtered != value) value = filtered;
@@ -143,6 +157,10 @@ NSUInteger ZZRuntimeFilteringCandidateCount(void) { return ZZCandidateMatches; }
 NSUInteger ZZRuntimeFilteringHookFailureCount(void) { return ZZHookFailures; }
 NSUInteger ZZRuntimeFilteringScannedClasses(void) { return ZZLastScannedClasses; }
 NSUInteger ZZRuntimeFilteringScannedMethods(void) { return ZZLastScannedMethods; }
+NSUInteger ZZRuntimeFilteringResponseObjects(void) { return ZZResponseObjects; }
+NSUInteger ZZRuntimeFilteringResponseArrays(void) { return ZZResponseArrays; }
+NSUInteger ZZRuntimeFilteringResponseDictionaries(void) { return ZZResponseDictionaries; }
+NSUInteger ZZRuntimeFilteringResponseUnknown(void) { return ZZResponseUnknown; }
 
 void ZZInstallRuntimeFiltering(void) {
     static dispatch_once_t once;
@@ -186,6 +204,7 @@ void ZZInstallRuntimeFiltering(void) {
             if (![targets containsObject:NSStringFromSelector(sel)]) continue;
             candidatesThisScan += 1;
             ZZCandidateMatches += 1;
+            NSLog(@"[ZZFilterUI] candidate class=%@ selector=%@", NSStringFromClass(cls), NSStringFromSelector(sel));
             ZZHookSelector(cls, sel);
         }
         free(methods);
@@ -195,7 +214,7 @@ void ZZInstallRuntimeFiltering(void) {
     ZZLastScannedClasses = (NSUInteger)actual;
     ZZLastScannedMethods = methodsSeen;
     ZZLastScanTime = now;
-    NSLog(@"[ZZFilterUI] runtime discovery v4: classes=%d methods=%lu candidates=%lu totalCandidates=%lu hookFailures=%lu totalHooked=%lu",
+    NSLog(@"[ZZFilterUI] runtime discovery v5: classes=%d methods=%lu candidates=%lu totalCandidates=%lu hookFailures=%lu totalHooked=%lu",
           actual, (unsigned long)methodsSeen, (unsigned long)candidatesThisScan,
           (unsigned long)ZZCandidateMatches, (unsigned long)ZZHookFailures,
           (unsigned long)ZZHookedSelectors.count);

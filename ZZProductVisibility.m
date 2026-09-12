@@ -78,10 +78,13 @@ NSString *ZZProductIDFromInfo(NSDictionary *info) {
 
 static NSUInteger ZZModelsProcessed;
 static NSUInteger ZZModelsHidden;
+static NSUInteger ZZModelNoDictionary;
+
+NSUInteger ZZFilterModelsNoDictionaryCount(void) { return ZZModelNoDictionary; }
 
 NSUInteger ZZFilterModelsProcessedCount(void) { return ZZModelsProcessed; }
 NSUInteger ZZFilterModelsHiddenCount(void) { return ZZModelsHidden; }
-void ZZResetFilterDiagnostics(void) { ZZModelsProcessed = 0; ZZModelsHidden = 0; }
+void ZZResetFilterDiagnostics(void) { ZZModelsProcessed = 0; ZZModelsHidden = 0; ZZModelNoDictionary = 0; }
 
 static NSDictionary *ZZModelDictionary(id model) {
     if ([model isKindOfClass:NSDictionary.class]) return model;
@@ -97,7 +100,7 @@ static NSDictionary *ZZModelDictionary(id model) {
 
 BOOL ZZShouldKeepModel(id model) {
     NSDictionary *d = ZZModelDictionary(model);
-    if (!d) return YES;
+    if (!d) { ZZModelNoDictionary += 1; return YES; }
     NSString *pid = ZZProductIDFromInfo(d);
     if (pid.length && ![[ZZProductVisibility shared] shouldDisplayProductID:pid]) return NO;
     ZZProductFilter *filter = [ZZProductFilter new];
@@ -123,16 +126,58 @@ NSArray *ZZFilteredModels(NSArray *models) {
     return result;
 }
 
-id ZZFilterRenderedData(id data) {
-    if ([data isKindOfClass:NSArray.class]) return ZZFilteredModels(data);
-    if (![data isKindOfClass:NSDictionary.class] || !ZZSettings.shared.enabled) return data;
-    NSMutableDictionary *copy = [data mutableCopy];
-    for (NSString *key in @[@"items", @"list", @"results", @"infos", @"itemsArray", @"goods", @"products"]) {
-        id value = copy[key];
-        if ([value isKindOfClass:NSArray.class]) {
-            copy[key] = ZZFilteredModels(value);
-            return copy;
+static BOOL ZZTryFilterObjectProperty(id object, NSString *key) {
+    if (!object || ![key length] || ![object respondsToSelector:@selector(valueForKey:)]) return NO;
+    id value = nil;
+    @try { value = [object valueForKey:key]; } @catch (__unused NSException *e) { return NO; }
+    if (![value isKindOfClass:NSArray.class] || !ZZSettings.shared.enabled) return NO;
+    NSArray *filtered = ZZFilteredModels(value);
+    if (filtered == value || filtered.count == value.count) return NO;
+    @try {
+        if ([object respondsToSelector:@selector(setValue:forKey:)]) {
+            [object setValue:filtered forKey:key];
+            NSLog(@"[ZZFilterUI] response KVC property=%@ %@ %lu->%lu", NSStringFromClass([object class]), key, (unsigned long)value.count, (unsigned long)filtered.count);
+            return YES;
         }
+    } @catch (NSException *e) {
+        NSLog(@"[ZZFilterUI] response KVC set failed %@ %@ exception=%@", NSStringFromClass([object class]), key, e);
+    }
+    return NO;
+}
+
+static BOOL ZZTryFilterDictionaryProperty(NSMutableDictionary *dict, NSString *key) {
+    id value = dict[key];
+    if (![value isKindOfClass:NSArray.class] || !ZZSettings.shared.enabled) return NO;
+    NSArray *filtered = ZZFilteredModels(value);
+    if (filtered.count == value.count) return NO;
+    dict[key] = filtered;
+    NSLog(@"[ZZFilterUI] response dictionary key=%@ %lu->%lu", key, (unsigned long)value.count, (unsigned long)filtered.count);
+    return YES;
+}
+
+id ZZFilterRenderedData(id data) {
+    if (!ZZSettings.shared.enabled) return data;
+    if ([data isKindOfClass:NSArray.class]) return ZZFilteredModels(data);
+    if ([data isKindOfClass:NSDictionary.class]) {
+        NSMutableDictionary *copy = [data mutableCopy];
+        BOOL changed = NO;
+        NSArray *keys = @[@"items", @"list", @"results", @"infos", @"itemsArray", @"goods", @"products", @"data", @"models", @"goodsList", @"wareList", @"itemList", @"content"];
+        for (NSString *key in keys) changed |= ZZTryFilterDictionaryProperty(copy, key);
+        if (changed) return copy;
+        // One level deeper for common response envelopes.
+        for (NSString *key in keys) {
+            id child = copy[key];
+            if ([child isKindOfClass:NSDictionary.class]) {
+                id filtered = ZZFilterRenderedData(child);
+                if (filtered != child) { copy[key] = filtered; return copy; }
+            }
+        }
+        return data;
+    }
+    // List responses in many apps are model objects rather than dictionaries.
+    NSArray *keys = @[@"items", @"list", @"results", @"infos", @"itemsArray", @"goods", @"products", @"data", @"models", @"goodsList", @"wareList", @"itemList", @"content"];
+    for (NSString *key in keys) {
+        if (ZZTryFilterObjectProperty(data, key)) return data;
     }
     return data;
 }

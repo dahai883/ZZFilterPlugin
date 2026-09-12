@@ -314,14 +314,20 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     NSUInteger scanned = ZZRuntimeFilteringScannedMethods();
     NSUInteger processed = ZZFilterModelsProcessedCount();
     NSUInteger hidden = ZZFilterModelsHiddenCount();
+    NSUInteger noDict = ZZFilterModelsNoDictionaryCount();
+    NSUInteger responseObjects = ZZRuntimeFilteringResponseObjects();
+    NSUInteger responseArrays = ZZRuntimeFilteringResponseArrays();
+    NSUInteger responseDicts = ZZRuntimeFilteringResponseDictionaries();
+    NSUInteger responseUnknown = ZZRuntimeFilteringResponseUnknown();
     NSUInteger network = ZZNetworkInterceptedRequests();
     NSUInteger modified = ZZNetworkModifiedResponses();
     return [NSString stringWithFormat:
-            @"插件：已加载\nUI Hook：%lu\nUI 调用：%lu\n处理商品：%lu\n隐藏商品：%lu\n网络拦截：%lu\n修改响应：%lu\n运行时扫描方法：%lu\n匹配目标方法：%lu\nHook失败：%lu",
+            @"插件：已加载\nUI Hook：%lu\nUI 调用：%lu\n处理商品：%lu\n隐藏商品：%lu\n网络拦截：%lu\n修改响应：%lu\n运行时扫描方法：%lu\n匹配目标方法：%lu\nHook失败：%lu\n响应对象：%lu（数组%lu 字典%lu 其他%lu）\n无法转模型：%lu",
             (unsigned long)hooks, (unsigned long)calls,
             (unsigned long)processed, (unsigned long)hidden,
             (unsigned long)network, (unsigned long)modified,
-            (unsigned long)scanned, (unsigned long)candidates, (unsigned long)failures];
+            (unsigned long)scanned, (unsigned long)candidates, (unsigned long)failures,
+            (unsigned long)responseObjects, (unsigned long)responseArrays, (unsigned long)responseDicts, (unsigned long)responseUnknown, (unsigned long)noDict];
 }
 
 - (void)showDiagnosticsFrom:(UIViewController *)vc {

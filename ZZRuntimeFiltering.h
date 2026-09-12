@@ -7,4 +7,8 @@ FOUNDATION_EXPORT NSUInteger ZZRuntimeFilteringCandidateCount(void);
 FOUNDATION_EXPORT NSUInteger ZZRuntimeFilteringHookFailureCount(void);
 FOUNDATION_EXPORT NSUInteger ZZRuntimeFilteringScannedClasses(void);
 FOUNDATION_EXPORT NSUInteger ZZRuntimeFilteringScannedMethods(void);
+FOUNDATION_EXPORT NSUInteger ZZRuntimeFilteringResponseObjects(void);
+FOUNDATION_EXPORT NSUInteger ZZRuntimeFilteringResponseArrays(void);
+FOUNDATION_EXPORT NSUInteger ZZRuntimeFilteringResponseDictionaries(void);
+FOUNDATION_EXPORT NSUInteger ZZRuntimeFilteringResponseUnknown(void);
 NS_ASSUME_NONNULL_END
