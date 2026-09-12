@@ -53,3 +53,7 @@ The implementation is an independent reimplementation and intentionally does not
 
 ### Xcode 15.x compatibility fix
 `ZZProductFilter.m` now avoids dot-syntax `value.length` on a variable declared as `id`, which Xcode reports as `property 'length' not found on object of type '__strong id'`.
+
+## Runtime listing adapter
+
+This build adds an independent runtime adapter for known listing/model entry points when those classes and selectors are present at runtime. It filters model arrays before the host renders them and logs the selector, input count, output count, and hidden count. It does not copy implementation code from the reference binary.

@@ -3,6 +3,7 @@
 #import "ZZSettings.h"
 #import "ZZOverlayController.h"
 #import "ZZNetworkInterception.h"
+#import "ZZRuntimeFiltering.h"
 
 /// Public entry point for an authorized host application.
 /// The host should call this and use the returned configuration when
@@ -39,6 +40,7 @@ static void ZZFilterPluginLoaded(void) {
     NSLog(@"[ZZOverlay] CONSTRUCTOR CALLED");
     ZZInstallNetworkInterception();
     ZZInstallUIFiltering();
+    ZZInstallRuntimeFiltering();
     // Keep constructor work minimal. UI setup is deferred to the main queue;
     // ZZOverlayBootstrap +load provides a second initialization path.
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -51,5 +53,6 @@ static void ZZFilterPluginLoaded(void) {
 /// These are intentionally activation-free.
 void ZZInstallUIFiltering(void) {
     NSLog(@"[ZZFilterUI] UI filtering layer initialized");
+    ZZInstallRuntimeFiltering();
 }
 
