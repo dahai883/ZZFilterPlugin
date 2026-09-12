@@ -4,6 +4,9 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 
+// Explicit declaration for SDK/toolchain compatibility.
+extern void objc_msgForward(void);
+
 static NSMutableDictionary<NSString *, NSValue *> *ZZOriginalForwardIMPs;
 static NSMutableSet<NSString *> *ZZHookedSelectors;
 static BOOL ZZForwardingInstalled;
