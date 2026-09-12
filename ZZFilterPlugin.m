@@ -4,6 +4,7 @@
 #import "ZZOverlayController.h"
 #import "ZZNetworkInterception.h"
 #import "ZZRuntimeFiltering.h"
+#import "ZZDebug.h"
 
 /// Public entry point for an authorized host application.
 /// The host should call this and use the returned configuration when
@@ -37,9 +38,14 @@ void ZZInstallUIFiltering(void);
 
 __attribute__((constructor))
 static void ZZFilterPluginLoaded(void) {
+    ZZFilterDiagnosticLogReset();
+    ZZFilterDiagnosticLog(@"PLUGIN constructor called");
     NSLog(@"[ZZOverlay] CONSTRUCTOR CALLED");
+    ZZFilterDiagnosticLog(@"PLUGIN install network");
     ZZInstallNetworkInterception();
+    ZZFilterDiagnosticLog(@"PLUGIN install UI");
     ZZInstallUIFiltering();
+    ZZFilterDiagnosticLog(@"PLUGIN install runtime");
     ZZInstallRuntimeFiltering();
     dispatch_async(dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(__unused NSTimer *timer) {
