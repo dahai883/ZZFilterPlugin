@@ -3,13 +3,10 @@
 #import "ZZSettings.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
-
-// Explicit declaration for SDK/toolchain compatibility.
-extern void objc_msgForward(void);
+#import <dlfcn.h>
 
 static NSMutableDictionary<NSString *, NSValue *> *ZZOriginalForwardIMPs;
 static NSMutableSet<NSString *> *ZZHookedSelectors;
-static BOOL ZZForwardingInstalled;
 
 static BOOL ZZLooksLikeModelArray(id obj) {
     if (![obj isKindOfClass:NSArray.class]) return NO;
@@ -97,7 +94,19 @@ static void ZZHookSelector(Class cls, SEL selector) {
 
     ZZOriginalForwardIMPs[hookKey] = [NSValue valueWithPointer:method_getImplementation(method)];
     [ZZHookedSelectors addObject:hookKey];
-    method_setImplementation(method, (IMP)objc_msgForward);
+
+    // Avoid a direct link against objc_msgForward. Some iOS SDK/linker
+    // combinations do not expose that symbol to dylib linkers even though
+    // the runtime can resolve it. Resolve it dynamically instead.
+    IMP forwardingIMP = (IMP)dlsym(RTLD_DEFAULT, "objc_msgForward");
+    if (!forwardingIMP) {
+        NSLog(@"[ZZFilterUI] cannot resolve objc_msgForward; skip %@ %@",
+              NSStringFromClass(cls), NSStringFromSelector(selector));
+        [ZZHookedSelectors removeObject:hookKey];
+        [ZZOriginalForwardIMPs removeObjectForKey:hookKey];
+        return;
+    }
+    method_setImplementation(method, forwardingIMP);
     NSLog(@"[ZZFilterUI] hooked %@ %@", NSStringFromClass(cls), NSStringFromSelector(selector));
 }
 
