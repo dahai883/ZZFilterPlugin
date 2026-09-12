@@ -6,5 +6,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// known model-array entry points are present. The adapter is independent of
 /// the reference binary and only filters object arrays passed to those APIs.
 FOUNDATION_EXPORT void ZZInstallRuntimeFiltering(void);
+FOUNDATION_EXPORT NSUInteger ZZRuntimeFilteringHookCount(void);
+FOUNDATION_EXPORT NSUInteger ZZRuntimeFilteringCalls(void);
 
 NS_ASSUME_NONNULL_END

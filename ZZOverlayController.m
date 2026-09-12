@@ -1,5 +1,8 @@
 #import "ZZOverlayController.h"
 #import "ZZSettings.h"
+#import "ZZRuntimeFiltering.h"
+#import "ZZProductVisibility.h"
+#import "ZZFilterURLProtocol.h"
 // Keep debug logging compatible with the iOS 17.5 SDK.
 // os_log's format argument must be a compile-time constant; forwarding a
 // variadic Objective-C format through a macro can trigger OS_LOG_STRING
@@ -73,6 +76,7 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     [self scheduleInstallRetry:1.5];
     [self scheduleInstallRetry:3.0];
     [self scheduleInstallRetry:5.0];
+    [self scheduleStatusRefresh];
 }
 
 - (void)stop {
@@ -265,6 +269,8 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
         button.layer.borderWidth = 1.0;
         button.layer.borderColor = UIColor.whiteColor.CGColor;
         [button setTitle:@"筛选" forState:UIControlStateNormal];
+        button.titleLabel.numberOfLines = 3;
+        button.titleLabel.textAlignment = NSTextAlignmentCenter;
         [button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
         button.titleLabel.font = [UIFont boldSystemFontOfSize:15.0];
         button.accessibilityLabel = @"ZZFilterPlugin 筛选";
@@ -272,6 +278,9 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
 
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(buttonPanned:)];
         [button addGestureRecognizer:pan];
+        UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(buttonLongPressed:)];
+        longPress.minimumPressDuration = 0.6;
+        [button addGestureRecognizer:longPress];
 
         [window addSubview:button];
         self.button = button;
@@ -285,6 +294,45 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     }
 
     [self refreshButton];
+}
+
+- (void)scheduleStatusRefresh {
+    if (!self.started) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (!self.started) return;
+        [self refreshButton];
+        [self scheduleStatusRefresh];
+    });
+}
+
+- (NSString *)diagnosticSummary {
+    NSUInteger hooks = ZZRuntimeFilteringHookCount();
+    NSUInteger calls = ZZRuntimeFilteringCalls();
+    NSUInteger processed = ZZFilterModelsProcessedCount();
+    NSUInteger hidden = ZZFilterModelsHiddenCount();
+    NSUInteger network = ZZNetworkInterceptedRequests();
+    NSUInteger modified = ZZNetworkModifiedResponses();
+    return [NSString stringWithFormat:
+            @"插件：已加载\nUI Hook：%lu\nUI 调用：%lu\n处理商品：%lu\n隐藏商品：%lu\n网络拦截：%lu\n修改响应：%lu",
+            (unsigned long)hooks, (unsigned long)calls,
+            (unsigned long)processed, (unsigned long)hidden,
+            (unsigned long)network, (unsigned long)modified];
+}
+
+- (void)showDiagnosticsFrom:(UIViewController *)vc {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"ZZFilterPlugin 状态"
+                                                                     message:[self diagnosticSummary]
+                                                              preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"刷新" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+        [self refreshButton];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"重置统计" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
+        ZZResetFilterDiagnostics();
+        [self refreshButton];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
+    [vc presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)buttonPanned:(UIPanGestureRecognizer *)gesture {
@@ -301,6 +349,13 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
         self.button.center = center;
         [gesture setTranslation:CGPointZero inView:self.hostWindow];
     }
+}
+
+- (void)buttonLongPressed:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateBegan || !NSThread.isMainThread) return;
+    UIWindow *window = self.hostWindow ?: [self activeWindow];
+    UIViewController *vc = [self topViewControllerFrom:window.rootViewController];
+    if (vc) [self showDiagnosticsFrom:vc];
 }
 
 - (void)buttonTapped:(UIButton *)sender {
@@ -324,8 +379,13 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     NSString *maxText = s.maximumText < NSIntegerMax ? [NSString stringWithFormat:@"%ld", (long)s.maximumText] : @"不限";
     NSString *minVer = s.minimumVersion.length ? s.minimumVersion : @"不限";
     NSString *maxVer = s.maximumVersion.length ? s.maximumVersion : @"不限";
-    return [NSString stringWithFormat:@"状态：%@\n数值范围：%@ ～ %@\n版本范围：%@ ～ %@",
-            s.enabled ? @"开启" : @"关闭", minText, maxText, minVer, maxVer];
+    return [NSString stringWithFormat:@"状态：%@\n数值范围：%@ ～ %@\n版本范围：%@ ～ %@\n\nUI Hook: %lu\n处理: %lu\n隐藏: %lu\n网络: %lu / 修改: %lu",
+            s.enabled ? @"开启" : @"关闭", minText, maxText, minVer, maxVer,
+            (unsigned long)ZZRuntimeFilteringHookCount(),
+            (unsigned long)ZZFilterModelsProcessedCount(),
+            (unsigned long)ZZFilterModelsHiddenCount(),
+            (unsigned long)ZZNetworkInterceptedRequests(),
+            (unsigned long)ZZNetworkModifiedResponses()];
 }
 
 - (void)presentSettingsFrom:(UIViewController *)vc {
@@ -401,8 +461,13 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
         return;
     }
     if (!self.button) return;
+    NSUInteger hooks = ZZRuntimeFilteringHookCount();
+    NSUInteger hidden = ZZFilterModelsHiddenCount();
+    NSString *mark = hooks > 0 ? @"✓" : @"!";
+    NSString *title = [NSString stringWithFormat:@"筛选\n%@ UI:%lu\n隐:%lu", mark, (unsigned long)hooks, (unsigned long)hidden];
+    [self.button setTitle:title forState:UIControlStateNormal];
     self.button.alpha = ZZSettings.shared.enabled ? 1.0 : 0.55;
-    ZZOverlayLogInfo(@"refreshButton enabled=%d alpha=%.2f", ZZSettings.shared.enabled, self.button.alpha);
+    ZZOverlayLogInfo(@"refreshButton enabled=%d hooks=%lu processed=%lu hidden=%lu network=%lu modified=%lu", ZZSettings.shared.enabled, (unsigned long)hooks, (unsigned long)ZZFilterModelsProcessedCount(), (unsigned long)hidden, (unsigned long)ZZNetworkInterceptedRequests(), (unsigned long)ZZNetworkModifiedResponses());
 }
 
 @end

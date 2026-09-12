@@ -3,12 +3,17 @@
 #import "ZZSettings.h"
 
 static NSString * const kHandledKey = @"ZZFilterHandledRequest";
+static NSUInteger ZZNetworkInterceptedCount;
+static NSUInteger ZZNetworkModifiedCount;
 
 @interface ZZFilterURLProtocol () <NSURLSessionDataDelegate>
 @property(nonatomic, strong) NSURLSessionDataTask *task;
 @property(nonatomic, strong) NSMutableData *responseData;
 @property(nonatomic, strong) NSURLResponse *receivedResponse;
 @end
+
+NSUInteger ZZNetworkInterceptedRequests(void) { return ZZNetworkInterceptedCount; }
+NSUInteger ZZNetworkModifiedResponses(void) { return ZZNetworkModifiedCount; }
 
 @implementation ZZFilterURLProtocol
 
@@ -123,6 +128,7 @@ static BOOL ZZReplaceFirstProductArray(id root, NSArray *filtered) {
     filter.maximumVersion = settings.maximumVersion;
 
     NSArray *filtered = [filter filteredProducts:products];
+    if (filtered.count != products.count) ZZNetworkModifiedCount += 1;
     NSLog(@"[ZZFilterNetwork] product array path=%@ before=%lu after=%lu min=%ld max=%ld minVer=%@ maxVer=%@",
           path ?: @"?", (unsigned long)products.count, (unsigned long)filtered.count,
           (long)settings.minimumText, (long)settings.maximumText,
@@ -143,6 +149,7 @@ static BOOL ZZReplaceFirstProductArray(id root, NSArray *filtered) {
     // handled-request marker above prevents recursion.
     NSURLSession *session = [NSURLSession sessionWithConfiguration:configuration delegate:self delegateQueue:nil];
     self.task = [session dataTaskWithRequest:request];
+    ZZNetworkInterceptedCount += 1;
     NSLog(@"[ZZFilterNetwork] INTERCEPT request %@ %@", request.HTTPMethod ?: @"GET", request.URL.absoluteString);
     [self.task resume];
 }

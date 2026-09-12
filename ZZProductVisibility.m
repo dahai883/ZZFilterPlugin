@@ -76,6 +76,13 @@ NSString *ZZProductIDFromInfo(NSDictionary *info) {
     return @"";
 }
 
+static NSUInteger ZZModelsProcessed;
+static NSUInteger ZZModelsHidden;
+
+NSUInteger ZZFilterModelsProcessedCount(void) { return ZZModelsProcessed; }
+NSUInteger ZZFilterModelsHiddenCount(void) { return ZZModelsHidden; }
+void ZZResetFilterDiagnostics(void) { ZZModelsProcessed = 0; ZZModelsHidden = 0; }
+
 static NSDictionary *ZZModelDictionary(id model) {
     if ([model isKindOfClass:NSDictionary.class]) return model;
     if ([model respondsToSelector:@selector(dictionaryWithValuesForKeys:)]) {
@@ -108,7 +115,8 @@ NSArray *ZZFilteredModels(NSArray *models) {
     NSMutableArray *result = [NSMutableArray arrayWithCapacity:models.count];
     NSUInteger hidden = 0;
     for (id model in models) {
-        if (ZZShouldKeepModel(model)) [result addObject:model]; else hidden++;
+        ZZModelsProcessed += 1;
+        if (ZZShouldKeepModel(model)) [result addObject:model]; else { hidden++; ZZModelsHidden += 1; }
     }
     NSLog(@"[ZZFilterUI] models before=%lu after=%lu hidden=%lu",
           (unsigned long)models.count, (unsigned long)result.count, (unsigned long)hidden);

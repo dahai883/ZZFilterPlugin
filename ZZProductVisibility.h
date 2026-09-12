@@ -15,5 +15,8 @@ FOUNDATION_EXPORT NSString *ZZProductIDFromInfo(NSDictionary *info);
 FOUNDATION_EXPORT BOOL ZZShouldKeepModel(id model);
 FOUNDATION_EXPORT NSArray *ZZFilteredModels(NSArray *models);
 FOUNDATION_EXPORT id ZZFilterRenderedData(id data);
+FOUNDATION_EXPORT NSUInteger ZZFilterModelsProcessedCount(void);
+FOUNDATION_EXPORT NSUInteger ZZFilterModelsHiddenCount(void);
+FOUNDATION_EXPORT void ZZResetFilterDiagnostics(void);
 
 NS_ASSUME_NONNULL_END

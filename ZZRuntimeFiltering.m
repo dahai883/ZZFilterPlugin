@@ -7,6 +7,7 @@
 
 static NSMutableDictionary<NSString *, NSValue *> *ZZOriginalForwardIMPs;
 static NSMutableSet<NSString *> *ZZHookedSelectors;
+static NSUInteger ZZRuntimeCalls;
 
 static BOOL ZZLooksLikeModelArray(id obj) {
     if (![obj isKindOfClass:NSArray.class]) return NO;
@@ -23,6 +24,7 @@ static BOOL ZZLooksLikeModelArray(id obj) {
 }
 
 static void ZZFilterInvocationArguments(NSInvocation *invocation) {
+    ZZRuntimeCalls += 1;
     if (!ZZSettings.shared.enabled) return;
     const char *types = invocation.methodSignature.methodReturnType;
     (void)types;
@@ -108,6 +110,14 @@ static void ZZHookSelector(Class cls, SEL selector) {
     }
     method_setImplementation(method, forwardingIMP);
     NSLog(@"[ZZFilterUI] hooked %@ %@", NSStringFromClass(cls), NSStringFromSelector(selector));
+}
+
+NSUInteger ZZRuntimeFilteringHookCount(void) {
+    return ZZHookedSelectors.count;
+}
+
+NSUInteger ZZRuntimeFilteringCalls(void) {
+    return ZZRuntimeCalls;
 }
 
 void ZZInstallRuntimeFiltering(void) {
