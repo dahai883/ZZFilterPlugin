@@ -9,6 +9,16 @@ static NSMutableDictionary<NSString *, NSValue *> *ZZOriginalForwardIMPs;
 static NSMutableSet<NSString *> *ZZHookedSelectors;
 static NSUInteger ZZRuntimeCalls;
 
+// Runtime-discovery diagnostics (declared here so the status UI and scanner
+// share one well-defined set of counters).
+static NSUInteger ZZRuntimeScannedClasses;
+static NSUInteger ZZRuntimeMatchedClasses;
+static NSUInteger ZZRuntimeMatchedMethods;
+static NSUInteger ZZRuntimeHookFailures;
+static NSUInteger ZZRuntimeLastClassCount;
+static NSUInteger ZZRuntimeLastMethodCount;
+static NSString *ZZRuntimeLastSummary = @"尚未扫描";
+
 static BOOL ZZLooksLikeModelArray(id obj) {
     if (![obj isKindOfClass:NSArray.class]) return NO;
     NSArray *a = obj;
@@ -91,12 +101,16 @@ static BOOL ZZHookSelector(Class cls, SEL selector) {
     // class-local methods and then replacing forwarding on many classes.
     // V8 only touches methods that the class itself declares.
     Method method = NULL;
-    if (!ZZClassDeclaresSelector(cls, selector, &method) || !method) return NO;
+    if (!ZZClassDeclaresSelector(cls, selector, &method) || !method) {
+        ZZRuntimeHookFailures += 1;
+        return NO;
+    }
 
     const char *types = method_getTypeEncoding(method);
     if (!types || types[0] != 'v') {
         NSLog(@"[ZZFilterUI] skip non-void %@ %@ types=%s",
               NSStringFromClass(cls), NSStringFromSelector(selector), types ?: "?");
+        ZZRuntimeHookFailures += 1;
         return NO;
     }
 
@@ -108,6 +122,7 @@ static BOOL ZZHookSelector(Class cls, SEL selector) {
     if (!class_getInstanceMethod(cls, alias)) {
         if (!class_addMethod(cls, alias, original, types)) {
             NSLog(@"[ZZFilterUI] alias add failed %@ %@", NSStringFromClass(cls), NSStringFromSelector(selector));
+            ZZRuntimeHookFailures += 1;
             return NO;
         }
     }
@@ -116,6 +131,7 @@ static BOOL ZZHookSelector(Class cls, SEL selector) {
     if (!forwardingIMP) {
         NSLog(@"[ZZFilterUI] cannot resolve objc_msgForward; skip %@ %@",
               NSStringFromClass(cls), NSStringFromSelector(selector));
+        ZZRuntimeHookFailures += 1;
         return NO;
     }
 
