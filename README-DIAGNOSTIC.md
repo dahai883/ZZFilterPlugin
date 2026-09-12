@@ -22,20 +22,11 @@ This is intended for debugging an authorized host/application integration.
 ## Dynamic runtime discovery
 This diagnostic build no longer depends on two hard-coded controller class names. It scans the running authorized host for the known list-rendering selectors and reports discovered/hooked counts. This helps distinguish a class-name mismatch from a real absence of the list-rendering API.
 
+## 设备端文件诊断
+本诊断版额外写入 `/tmp/ZZFilterPlugin-diagnostic.log`，不依赖 iOS 上不存在的 `log show`、`vmmap`、`strings` 命令。
 
-## V2 Runtime Scanner
-This diagnostic build writes a local runtime inventory to `/tmp/ZZFilterPlugin-diagnostic.log`. It records plugin initialization, exact selector matches, and non-invasive candidate selector names. It does not record cookies, tokens, or response bodies.
-
-After launching the authorized test app and opening the listing/search page, run:
-
-```sh
+复现一次后执行：
+```
 cat /tmp/ZZFilterPlugin-diagnostic.log
 ```
-
-If the file is long, use:
-
-```sh
-tail -n 120 /tmp/ZZFilterPlugin-diagnostic.log
-```
-
-The most important lines start with `DISCOVERY`.
+如果文件存在，直接把全部内容发回来即可。

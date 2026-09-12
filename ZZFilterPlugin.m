@@ -38,14 +38,10 @@ void ZZInstallUIFiltering(void);
 
 __attribute__((constructor))
 static void ZZFilterPluginLoaded(void) {
-    ZZFilterDiagnosticLogReset();
-    ZZFilterDiagnosticLog(@"PLUGIN constructor called");
     NSLog(@"[ZZOverlay] CONSTRUCTOR CALLED");
-    ZZFilterDiagnosticLog(@"PLUGIN install network");
+    ZZFilterDebugFileLog(@"CONSTRUCTOR loaded");
     ZZInstallNetworkInterception();
-    ZZFilterDiagnosticLog(@"PLUGIN install UI");
     ZZInstallUIFiltering();
-    ZZFilterDiagnosticLog(@"PLUGIN install runtime");
     ZZInstallRuntimeFiltering();
     dispatch_async(dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(__unused NSTimer *timer) {
@@ -56,6 +52,7 @@ static void ZZFilterPluginLoaded(void) {
     // ZZOverlayBootstrap +load provides a second initialization path.
     dispatch_async(dispatch_get_main_queue(), ^{
         NSLog(@"[ZZOverlay] constructor main-queue callback");
+        ZZFilterDebugFileLog(@"MAIN_QUEUE callback");
         [[ZZOverlayController shared] start];
     });
 }

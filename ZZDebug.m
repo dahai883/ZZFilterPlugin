@@ -1,37 +1,36 @@
 #import <Foundation/Foundation.h>
 #import <os/log.h>
+#import <TargetConditionals.h>
+#import <unistd.h>
+#import <stdarg.h>
+#import <stdio.h>
+#import <dlfcn.h>
 #import "ZZDebug.h"
 
 static os_log_t ZZDebugLog(void) {
     static os_log_t log;
     static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{ log = os_log_create("com.zzfilterplugin", "debug"); });
+    dispatch_once(&onceToken, ^{
+        log = os_log_create("com.zzfilterplugin", "debug");
+    });
     return log;
 }
 
-NSString *ZZFilterDiagnosticLogPath(void) { return @"/tmp/ZZFilterPlugin-diagnostic.log"; }
-
-void ZZFilterDiagnosticLogReset(void) {
-    @try { [[NSFileManager defaultManager] removeItemAtPath:ZZFilterDiagnosticLogPath() error:nil]; } @catch (__unused NSException *e) {}
-}
-
-void ZZFilterDiagnosticLog(NSString *format, ...) {
+void ZZFilterDebugFileLog(NSString *format, ...) {
     if (!format) return;
-    va_list args; va_start(args, format);
-    NSString *line = [[NSString alloc] initWithFormat:format arguments:args];
+    NSString *line = nil;
+    va_list args;
+    va_start(args, format);
+    line = [[NSString alloc] initWithFormat:format arguments:args];
     va_end(args);
-    NSString *full = [NSString stringWithFormat:@"%@ %@\n", [NSDate date], line];
-    NSData *data = [full dataUsingEncoding:NSUTF8StringEncoding];
-    @try {
-        NSString *path = ZZFilterDiagnosticLogPath();
-        if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
-            [data writeToFile:path atomically:YES];
-        } else {
-            NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
-            [fh seekToEndOfFile]; [fh writeData:data]; [fh closeFile];
-        }
-    } @catch (__unused NSException *e) {}
-    os_log(ZZDebugLog(), "%{public}s", line.UTF8String ?: "");
+    if (!line) return;
+
+    FILE *fp = fopen("/tmp/ZZFilterPlugin-diagnostic.log", "a");
+    if (!fp) return;
+    NSDate *now = [NSDate date];
+    fprintf(fp, "[%0.3f] pid=%d %s\n", now.timeIntervalSince1970, getpid(), line.UTF8String ?: "");
+    fflush(fp);
+    fclose(fp);
 }
 
 void ZZFilterDebugLogBuildInfo(void) {
@@ -42,5 +41,6 @@ void ZZFilterDebugLogBuildInfo(void) {
 #else
     const char *arch = "unknown";
 #endif
-    ZZFilterDiagnosticLog(@"BUILD arch=%s iOS-min=16.0", arch);
+    os_log(ZZDebugLog(), "ZZFilterPlugin DEBUG build; arch=%{public}s; iOS min=16.0", arch);
+    ZZFilterDebugFileLog(@"BUILD arch=%s", arch);
 }
