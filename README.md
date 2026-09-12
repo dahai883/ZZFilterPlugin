@@ -57,3 +57,9 @@ The implementation is an independent reimplementation and intentionally does not
 ## Runtime listing adapter
 
 This build adds an independent runtime adapter for known listing/model entry points when those classes and selectors are present at runtime. It filters model arrays before the host renders them and logs the selector, input count, output count, and hidden count. It does not copy implementation code from the reference binary.
+
+
+## v7 diagnostic build
+- Runtime discovery checks both directly implemented and inherited known list-entry selectors.
+- The status dialog reports scanned classes, matched classes/methods, and hook failures.
+- This build is for authorized testing/debugging and contains no activation/licensing bypass logic.

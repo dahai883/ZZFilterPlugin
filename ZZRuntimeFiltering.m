@@ -8,12 +8,19 @@
 static NSMutableDictionary<NSString *, NSValue *> *ZZOriginalForwardIMPs;
 static NSMutableSet<NSString *> *ZZHookedSelectors;
 static NSUInteger ZZRuntimeCalls;
+static NSUInteger ZZRuntimeScannedClasses;
+static NSUInteger ZZRuntimeMatchedClasses;
+static NSUInteger ZZRuntimeMatchedMethods;
+static NSUInteger ZZRuntimeHookFailures;
+static NSUInteger ZZRuntimeLastClassCount;
+static NSUInteger ZZRuntimeLastMethodCount;
+static NSString *ZZRuntimeLastSummary;
 
 static BOOL ZZLooksLikeModelArray(id obj) {
     if (![obj isKindOfClass:NSArray.class]) return NO;
     NSArray *a = obj;
     if (!a.count) return YES;
-    NSUInteger inspected = MIN((NSUInteger)6, a.count);
+    NSUInteger inspected = MIN((NSUInteger)8, a.count);
     NSUInteger modelish = 0;
     for (NSUInteger i = 0; i < inspected; i++) {
         id item = a[i];
@@ -26,8 +33,6 @@ static BOOL ZZLooksLikeModelArray(id obj) {
 static void ZZFilterInvocationArguments(NSInvocation *invocation) {
     ZZRuntimeCalls += 1;
     if (!ZZSettings.shared.enabled) return;
-    const char *types = invocation.methodSignature.methodReturnType;
-    (void)types;
 
     NSUInteger count = invocation.methodSignature.numberOfArguments;
     for (NSUInteger i = 2; i < count; i++) {
@@ -35,35 +40,37 @@ static void ZZFilterInvocationArguments(NSInvocation *invocation) {
         if (!argType || argType[0] != '@') continue;
         __unsafe_unretained id value = nil;
         [invocation getArgument:&value atIndex:i];
-        if (ZZLooksLikeModelArray(value)) {
-            NSArray *filtered = ZZFilteredModels(value);
-            if (filtered != value) {
-                id replacement = filtered;
-                [invocation setArgument:&replacement atIndex:i];
-                NSLog(@"[ZZFilterUI] runtime selector=%@ array=%lu -> %lu",
-                      NSStringFromSelector(invocation.selector),
-                      (unsigned long)[value count], (unsigned long)[filtered count]);
-            }
-            break;
+        if (!ZZLooksLikeModelArray(value)) continue;
+
+        NSArray *filtered = ZZFilteredModels((NSArray *)value);
+        if (filtered != value) {
+            id replacement = filtered;
+            [invocation setArgument:&replacement atIndex:i];
+            NSLog(@"[ZZFilterUI] runtime selector=%@ array=%lu -> %lu",
+                  NSStringFromSelector(invocation.selector),
+                  (unsigned long)[(NSArray *)value count],
+                  (unsigned long)filtered.count);
         }
+        break;
     }
 }
 
 static void ZZForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
-    NSString *key = [NSString stringWithFormat:@"%p:%@", object_getClass(self), NSStringFromSelector(invocation.selector)];
+    Class cls = object_getClass(self);
+    NSString *key = [NSString stringWithFormat:@"%p:%@", cls, NSStringFromSelector(invocation.selector)];
     NSValue *impValue = ZZOriginalForwardIMPs[key];
     if (impValue) {
         ZZFilterInvocationArguments(invocation);
         SEL alias = NSSelectorFromString([NSString stringWithFormat:@"zz_orig_%@", NSStringFromSelector(invocation.selector)]);
-        invocation.selector = alias;
-        [invocation invokeWithTarget:self];
-        return;
+        if ([self respondsToSelector:alias]) {
+            invocation.selector = alias;
+            [invocation invokeWithTarget:self];
+            return;
+        }
     }
 
-    // Fall back to the class's original forwarding implementation.
-    NSString *fwdKey = [NSString stringWithFormat:@"%p:forwardInvocation", object_getClass(self)];
-    NSValue *fwdValue = ZZOriginalForwardIMPs[fwdKey];
-    IMP originalFwd = (IMP)[fwdValue pointerValue];
+    NSString *fwdKey = [NSString stringWithFormat:@"%p:forwardInvocation", cls];
+    IMP originalFwd = (IMP)[ZZOriginalForwardIMPs[fwdKey] pointerValue];
     if (originalFwd && originalFwd != (IMP)ZZForwardInvocation) {
         ((void (*)(id, SEL, NSInvocation *))originalFwd)(self, _cmd, invocation);
         return;
@@ -71,21 +78,47 @@ static void ZZForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
     [self doesNotRecognizeSelector:invocation.selector];
 }
 
-static void ZZHookSelector(Class cls, SEL selector) {
-    if (!cls || !selector) return;
+static BOOL ZZHookSelector(Class cls, SEL selector) {
+    if (!cls || !selector) return NO;
+
     Method method = class_getInstanceMethod(cls, selector);
-    if (!method) return;
+    if (!method) return NO;
+
+    // If the selector is inherited, create a class-local copy first. This
+    // avoids modifying a shared superclass implementation for every subclass.
+    Method direct = class_getInstanceMethod(cls, selector);
+    BOOL isDirect = NO;
+    unsigned int directCount = 0;
+    Method *directMethods = class_copyMethodList(cls, &directCount);
+    if (directMethods) {
+        for (unsigned int i = 0; i < directCount; i++) {
+            if (method_getName(directMethods[i]) == selector) { isDirect = YES; break; }
+        }
+        free(directMethods);
+    }
+    if (!isDirect) {
+        IMP inheritedIMP = method_getImplementation(method);
+        const char *types = method_getTypeEncoding(method);
+        if (!class_addMethod(cls, selector, inheritedIMP, types)) {
+            ZZRuntimeHookFailures += 1;
+            return NO;
+        }
+        direct = class_getInstanceMethod(cls, selector);
+        if (!direct) {
+            ZZRuntimeHookFailures += 1;
+            return NO;
+        }
+        method = direct;
+    }
 
     NSString *hookKey = [NSString stringWithFormat:@"%p:%@", cls, NSStringFromSelector(selector)];
-    if ([ZZHookedSelectors containsObject:hookKey]) return;
+    if ([ZZHookedSelectors containsObject:hookKey]) return YES;
 
     SEL alias = NSSelectorFromString([NSString stringWithFormat:@"zz_orig_%@", NSStringFromSelector(selector)]);
     if (!class_getInstanceMethod(cls, alias)) {
         class_addMethod(cls, alias, method_getImplementation(method), method_getTypeEncoding(method));
     }
 
-    // Install forwardInvocation only once per target class, preserving the
-    // existing implementation for selectors we do not own.
     Method fwd = class_getInstanceMethod(cls, @selector(forwardInvocation:));
     IMP originalFwd = fwd ? method_getImplementation(fwd) : NULL;
     NSString *fwdKey = [NSString stringWithFormat:@"%p:forwardInvocation", cls];
@@ -95,30 +128,28 @@ static void ZZHookSelector(Class cls, SEL selector) {
     }
 
     ZZOriginalForwardIMPs[hookKey] = [NSValue valueWithPointer:method_getImplementation(method)];
-    [ZZHookedSelectors addObject:hookKey];
-
-    // Avoid a direct link against objc_msgForward. Some iOS SDK/linker
-    // combinations do not expose that symbol to dylib linkers even though
-    // the runtime can resolve it. Resolve it dynamically instead.
     IMP forwardingIMP = (IMP)dlsym(RTLD_DEFAULT, "objc_msgForward");
     if (!forwardingIMP) {
+        ZZRuntimeHookFailures += 1;
+        [ZZOriginalForwardIMPs removeObjectForKey:hookKey];
         NSLog(@"[ZZFilterUI] cannot resolve objc_msgForward; skip %@ %@",
               NSStringFromClass(cls), NSStringFromSelector(selector));
-        [ZZHookedSelectors removeObject:hookKey];
-        [ZZOriginalForwardIMPs removeObjectForKey:hookKey];
-        return;
+        return NO;
     }
+
+    [ZZHookedSelectors addObject:hookKey];
     method_setImplementation(method, forwardingIMP);
     NSLog(@"[ZZFilterUI] hooked %@ %@", NSStringFromClass(cls), NSStringFromSelector(selector));
+    return YES;
 }
 
-NSUInteger ZZRuntimeFilteringHookCount(void) {
-    return ZZHookedSelectors.count;
-}
-
-NSUInteger ZZRuntimeFilteringCalls(void) {
-    return ZZRuntimeCalls;
-}
+NSUInteger ZZRuntimeFilteringHookCount(void) { return ZZHookedSelectors.count; }
+NSUInteger ZZRuntimeFilteringCalls(void) { return ZZRuntimeCalls; }
+NSUInteger ZZRuntimeFilteringScannedClasses(void) { return ZZRuntimeScannedClasses; }
+NSUInteger ZZRuntimeFilteringMatchedClasses(void) { return ZZRuntimeMatchedClasses; }
+NSUInteger ZZRuntimeFilteringMatchedMethods(void) { return ZZRuntimeMatchedMethods; }
+NSUInteger ZZRuntimeFilteringHookFailures(void) { return ZZRuntimeHookFailures; }
+NSString *ZZRuntimeFilteringLastSummary(void) { return ZZRuntimeLastSummary ?: @"尚未扫描"; }
 
 void ZZInstallRuntimeFiltering(void) {
     static dispatch_once_t initOnce;
@@ -127,10 +158,9 @@ void ZZInstallRuntimeFiltering(void) {
         ZZHookedSelectors = [NSMutableSet set];
     });
 
-    // The reference build exposes these list-rendering selectors.  Instead of
-    // assuming a particular controller class name, discover classes that
-    // actually implement the selectors in the running, authorized host.
     NSArray<NSString *> *selectors = @[
+        @"addCellWithModel:forSection:className:",
+        @"addCellWithModel:forSection:className:tag:",
         @"addCellsWithModelArray:forSection:className:",
         @"addCellsWithModelArray:forSection:className:tag:",
         @"insertCellsWithModelArray:forSection:className:pos:",
@@ -138,43 +168,60 @@ void ZZInstallRuntimeFiltering(void) {
         @"p_addCellsWithModelArray:forSection:className:tag:",
         @"p_insertCellsWithModelArray:forSection:className:tag:pos:",
         @"addListingGoodsWithRespModel:",
-        @"reloadListingGoodsWithRespModel:"
+        @"reloadListingGoodsWithRespModel:",
+        @"requestDataWithPageIndex:"
     ];
 
     int classCount = objc_getClassList(NULL, 0);
     if (classCount <= 0) {
+        ZZRuntimeLastSummary = @"运行时类列表为空";
         NSLog(@"[ZZFilterUI] runtime discovery: no classes yet");
         return;
     }
 
     Class *classes = (__unsafe_unretained Class *)calloc((size_t)classCount, sizeof(Class));
     int actual = objc_getClassList(classes, classCount);
-    NSUInteger discovered = 0;
+    NSUInteger matchedClasses = 0;
+    NSUInteger matchedMethods = 0;
     NSUInteger newlyHooked = 0;
+    NSUInteger methodCountTotal = 0;
 
     for (int i = 0; i < actual; i++) {
         Class cls = classes[i];
         if (!cls) continue;
-
-        unsigned int methodCount = 0;
-        Method *methods = class_copyMethodList(cls, &methodCount);
-        if (!methods) continue;
-
-        for (unsigned int m = 0; m < methodCount; m++) {
-            SEL implemented = method_getName(methods[m]);
-            NSString *name = NSStringFromSelector(implemented);
-            if (![selectors containsObject:name]) continue;
-            discovered++;
-
-            NSUInteger before = ZZHookedSelectors.count;
-            ZZHookSelector(cls, implemented);
-            if (ZZHookedSelectors.count > before) newlyHooked++;
+        unsigned int count = 0;
+        Method *methods = class_copyMethodList(cls, &count);
+        if (methods) {
+            methodCountTotal += count;
+            free(methods);
         }
-        free(methods);
+
+        BOOL classMatched = NO;
+        for (NSString *selectorName in selectors) {
+            SEL sel = NSSelectorFromString(selectorName);
+            Method method = class_getInstanceMethod(cls, sel);
+            if (!method) continue;
+            classMatched = YES;
+            matchedMethods += 1;
+            NSUInteger before = ZZHookedSelectors.count;
+            if (ZZHookSelector(cls, sel) && ZZHookedSelectors.count > before) newlyHooked += 1;
+        }
+        if (classMatched) matchedClasses += 1;
     }
     free(classes);
 
-    NSLog(@"[ZZFilterUI] runtime discovery: classes=%d methods=%lu newlyHooked=%lu totalHooked=%lu",
-          actual, (unsigned long)discovered, (unsigned long)newlyHooked,
-          (unsigned long)ZZHookedSelectors.count);
+    ZZRuntimeScannedClasses = (NSUInteger)actual;
+    ZZRuntimeMatchedClasses = matchedClasses;
+    ZZRuntimeMatchedMethods = matchedMethods;
+    ZZRuntimeLastClassCount = (NSUInteger)actual;
+    ZZRuntimeLastMethodCount = methodCountTotal;
+    ZZRuntimeLastSummary = [NSString stringWithFormat:@"类=%lu 方法=%lu 匹配类=%lu 匹配方法=%lu 新Hook=%lu 失败=%lu 总Hook=%lu",
+                            (unsigned long)ZZRuntimeLastClassCount,
+                            (unsigned long)ZZRuntimeLastMethodCount,
+                            (unsigned long)matchedClasses,
+                            (unsigned long)matchedMethods,
+                            (unsigned long)newlyHooked,
+                            (unsigned long)ZZRuntimeHookFailures,
+                            (unsigned long)ZZHookedSelectors.count];
+    NSLog(@"[ZZFilterUI] runtime discovery: %@", ZZRuntimeLastSummary);
 }
