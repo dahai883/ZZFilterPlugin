@@ -1,4 +1,4 @@
-# ZZFilterPlugin v7 Diagnostic Build
+# ZZFilterPlugin Diagnostic Build
 
 This build adds an on-device diagnostic display to the independent filter plugin.
 
@@ -22,6 +22,6 @@ This is intended for debugging an authorized host/application integration.
 ## Dynamic runtime discovery
 This diagnostic build no longer depends on two hard-coded controller class names. It scans the running authorized host for the known list-rendering selectors and reports discovered/hooked counts. This helps distinguish a class-name mismatch from a real absence of the list-rendering API.
 
-## v7 build note
-- Keeps the v6 compile fix and expands runtime discovery to inherited selectors, so a target method inherited from a superclass can be detected without patching the superclass globally.
+## v6 build note
+- Compile fix: collection values in `ZZProductVisibility` are explicitly cast before using collection-only APIs, avoiding Clang errors such as `property 'count' not found on object of type '__strong id'`.
 - No activation, licensing, or security-bypass logic is included.
