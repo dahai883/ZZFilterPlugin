@@ -8,5 +8,9 @@ NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXPORT void ZZInstallRuntimeFiltering(void);
 FOUNDATION_EXPORT NSUInteger ZZRuntimeFilteringHookCount(void);
 FOUNDATION_EXPORT NSUInteger ZZRuntimeFilteringCalls(void);
+FOUNDATION_EXPORT NSUInteger ZZRuntimeFilteringClassesScanned(void);
+FOUNDATION_EXPORT NSUInteger ZZRuntimeFilteringSelectorMatches(void);
+FOUNDATION_EXPORT NSUInteger ZZRuntimeFilteringHookFailures(void);
+FOUNDATION_EXPORT NSString *ZZRuntimeFilteringLastDiscovery(void);
 
 NS_ASSUME_NONNULL_END

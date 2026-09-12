@@ -313,11 +313,17 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     NSUInteger hidden = ZZFilterModelsHiddenCount();
     NSUInteger network = ZZNetworkInterceptedRequests();
     NSUInteger modified = ZZNetworkModifiedResponses();
+    NSUInteger classes = ZZRuntimeFilteringClassesScanned();
+    NSUInteger matches = ZZRuntimeFilteringSelectorMatches();
+    NSUInteger failures = ZZRuntimeFilteringHookFailures();
+    NSString *last = ZZRuntimeFilteringLastDiscovery();
     return [NSString stringWithFormat:
-            @"插件：已加载\nUI Hook：%lu\nUI 调用：%lu\n处理商品：%lu\n隐藏商品：%lu\n网络拦截：%lu\n修改响应：%lu",
+            @"插件：已加载\nUI Hook：%lu\nUI 调用：%lu\n处理商品：%lu\n隐藏商品：%lu\n网络拦截：%lu\n修改响应：%lu\n\n运行时扫描类：%lu\n匹配目标方法：%lu\nHook失败：%lu\n最近扫描：%@",
             (unsigned long)hooks, (unsigned long)calls,
             (unsigned long)processed, (unsigned long)hidden,
-            (unsigned long)network, (unsigned long)modified];
+            (unsigned long)network, (unsigned long)modified,
+            (unsigned long)classes, (unsigned long)matches,
+            (unsigned long)failures, last];
 }
 
 - (void)showDiagnosticsFrom:(UIViewController *)vc {
@@ -379,13 +385,16 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     NSString *maxText = s.maximumText < NSIntegerMax ? [NSString stringWithFormat:@"%ld", (long)s.maximumText] : @"不限";
     NSString *minVer = s.minimumVersion.length ? s.minimumVersion : @"不限";
     NSString *maxVer = s.maximumVersion.length ? s.maximumVersion : @"不限";
-    return [NSString stringWithFormat:@"状态：%@\n数值范围：%@ ～ %@\n版本范围：%@ ～ %@\n\nUI Hook: %lu\n处理: %lu\n隐藏: %lu\n网络: %lu / 修改: %lu",
+    return [NSString stringWithFormat:@"状态：%@\n数值范围：%@ ～ %@\n版本范围：%@ ～ %@\n\nUI Hook: %lu\n处理: %lu\n隐藏: %lu\n网络: %lu / 修改: %lu\n扫描: 类%lu / 匹配%lu / 失败%lu",
             s.enabled ? @"开启" : @"关闭", minText, maxText, minVer, maxVer,
             (unsigned long)ZZRuntimeFilteringHookCount(),
             (unsigned long)ZZFilterModelsProcessedCount(),
             (unsigned long)ZZFilterModelsHiddenCount(),
             (unsigned long)ZZNetworkInterceptedRequests(),
-            (unsigned long)ZZNetworkModifiedResponses()];
+            (unsigned long)ZZNetworkModifiedResponses(),
+            (unsigned long)ZZRuntimeFilteringClassesScanned(),
+            (unsigned long)ZZRuntimeFilteringSelectorMatches(),
+            (unsigned long)ZZRuntimeFilteringHookFailures()];
 }
 
 - (void)presentSettingsFrom:(UIViewController *)vc {

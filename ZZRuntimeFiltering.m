@@ -1,7 +1,6 @@
 #import "ZZRuntimeFiltering.h"
 #import "ZZProductVisibility.h"
 #import "ZZSettings.h"
-#import "ZZDebug.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <dlfcn.h>
@@ -9,6 +8,10 @@
 static NSMutableDictionary<NSString *, NSValue *> *ZZOriginalForwardIMPs;
 static NSMutableSet<NSString *> *ZZHookedSelectors;
 static NSUInteger ZZRuntimeCalls;
+static NSUInteger ZZRuntimeClassesScanned;
+static NSUInteger ZZRuntimeSelectorMatches;
+static NSUInteger ZZRuntimeHookFailures;
+static NSString *ZZRuntimeLastDiscovery = @"尚未扫描";
 
 static BOOL ZZLooksLikeModelArray(id obj) {
     if (![obj isKindOfClass:NSArray.class]) return NO;
@@ -103,14 +106,15 @@ static void ZZHookSelector(Class cls, SEL selector) {
     // the runtime can resolve it. Resolve it dynamically instead.
     IMP forwardingIMP = (IMP)dlsym(RTLD_DEFAULT, "objc_msgForward");
     if (!forwardingIMP) {
-        ZZDiagLog(@"cannot resolve objc_msgForward; skip %@ %@",
+        ZZRuntimeHookFailures += 1;
+        NSLog(@"[ZZFilterUI] cannot resolve objc_msgForward; skip %@ %@",
               NSStringFromClass(cls), NSStringFromSelector(selector));
         [ZZHookedSelectors removeObject:hookKey];
         [ZZOriginalForwardIMPs removeObjectForKey:hookKey];
         return;
     }
     method_setImplementation(method, forwardingIMP);
-    ZZDiagLog(@"HOOKED %@ %@", NSStringFromClass(cls), NSStringFromSelector(selector));
+    NSLog(@"[ZZFilterUI] hooked %@ %@", NSStringFromClass(cls), NSStringFromSelector(selector));
 }
 
 NSUInteger ZZRuntimeFilteringHookCount(void) {
@@ -121,9 +125,13 @@ NSUInteger ZZRuntimeFilteringCalls(void) {
     return ZZRuntimeCalls;
 }
 
+NSUInteger ZZRuntimeFilteringClassesScanned(void) { return ZZRuntimeClassesScanned; }
+NSUInteger ZZRuntimeFilteringSelectorMatches(void) { return ZZRuntimeSelectorMatches; }
+NSUInteger ZZRuntimeFilteringHookFailures(void) { return ZZRuntimeHookFailures; }
+NSString *ZZRuntimeFilteringLastDiscovery(void) { return ZZRuntimeLastDiscovery ?: @""; }
+
 void ZZInstallRuntimeFiltering(void) {
     static dispatch_once_t initOnce;
-    ZZDiagLog(@"runtime install invoked; bundle=%@", NSBundle.mainBundle.bundleIdentifier ?: @"<nil>");
     dispatch_once(&initOnce, ^{
         ZZOriginalForwardIMPs = [NSMutableDictionary dictionary];
         ZZHookedSelectors = [NSMutableSet set];
@@ -144,8 +152,10 @@ void ZZInstallRuntimeFiltering(void) {
     ];
 
     int classCount = objc_getClassList(NULL, 0);
+    ZZRuntimeClassesScanned = classCount > 0 ? (NSUInteger)classCount : 0;
     if (classCount <= 0) {
-        ZZDiagLog(@"runtime discovery: no classes yet");
+        ZZRuntimeLastDiscovery = @"无类可扫描";
+        NSLog(@"[ZZFilterUI] runtime discovery: no classes yet");
         return;
     }
 
@@ -153,8 +163,6 @@ void ZZInstallRuntimeFiltering(void) {
     int actual = objc_getClassList(classes, classCount);
     NSUInteger discovered = 0;
     NSUInteger newlyHooked = 0;
-    NSUInteger keywordCandidates = 0;
-    NSMutableArray<NSString *> *candidateLines = [NSMutableArray array];
 
     for (int i = 0; i < actual; i++) {
         Class cls = classes[i];
@@ -167,37 +175,22 @@ void ZZInstallRuntimeFiltering(void) {
         for (unsigned int m = 0; m < methodCount; m++) {
             SEL implemented = method_getName(methods[m]);
             NSString *name = NSStringFromSelector(implemented);
-            if ([selectors containsObject:name]) {
-                discovered++;
-                NSUInteger before = ZZHookedSelectors.count;
-                ZZHookSelector(cls, implemented);
-                if (ZZHookedSelectors.count > before) newlyHooked++;
-                continue;
-            }
-            NSString *lower = name.lowercaseString;
-            BOOL keyword = ([lower containsString:@"listing"] ||
-                            [lower containsString:@"goods"] ||
-                            [lower containsString:@"cell"] ||
-                            [lower containsString:@"model"] ||
-                            [lower containsString:@"requestdata"] ||
-                            [lower containsString:@"reload"] ||
-                            [lower containsString:@"insert"] ||
-                            [lower containsString:@"addcells"]);
-            if (keyword && keywordCandidates < 120) {
-                keywordCandidates++;
-                [candidateLines addObject:[NSString stringWithFormat:@"%@ :: %@", NSStringFromClass(cls), name]];
-            }
+            if (![selectors containsObject:name]) continue;
+            discovered++;
+            ZZRuntimeSelectorMatches += 1;
+
+            NSUInteger before = ZZHookedSelectors.count;
+            ZZHookSelector(cls, implemented);
+            if (ZZHookedSelectors.count > before) newlyHooked++;
         }
         free(methods);
     }
     free(classes);
 
-    ZZDiagLog(@"runtime discovery: classes=%d exactMatches=%lu newlyHooked=%lu totalHooked=%lu keywordCandidates=%lu",
+    ZZRuntimeLastDiscovery = [NSString stringWithFormat:@"类=%d 匹配=%lu 新Hook=%lu 总Hook=%lu",
+                               actual, (unsigned long)discovered, (unsigned long)newlyHooked,
+                               (unsigned long)ZZHookedSelectors.count];
+    NSLog(@"[ZZFilterUI] runtime discovery: classes=%d methods=%lu newlyHooked=%lu totalHooked=%lu",
           actual, (unsigned long)discovered, (unsigned long)newlyHooked,
-          (unsigned long)ZZHookedSelectors.count, (unsigned long)keywordCandidates);
-    if (candidateLines.count) {
-        for (NSString *line in candidateLines) ZZDiagLog(@"CANDIDATE %@", line);
-    } else {
-        ZZDiagLog(@"CANDIDATE none");
-    }
+          (unsigned long)ZZHookedSelectors.count);
 }
