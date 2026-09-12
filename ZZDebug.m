@@ -1,11 +1,6 @@
-#import <Foundation/Foundation.h>
-#import <os/log.h>
-#import <TargetConditionals.h>
-#import <unistd.h>
-#import <stdarg.h>
-#import <stdio.h>
-#import <dlfcn.h>
 #import "ZZDebug.h"
+#import <os/log.h>
+#import <unistd.h>
 
 static os_log_t ZZDebugLog(void) {
     static os_log_t log;
@@ -16,21 +11,40 @@ static os_log_t ZZDebugLog(void) {
     return log;
 }
 
-void ZZFilterDebugFileLog(NSString *format, ...) {
+NSString *ZZDiagLogPath(void) {
+    return @"/var/mobile/ZZFilterPlugin-diagnostic.log";
+}
+
+void ZZDiagLog(NSString *format, ...) {
     if (!format) return;
-    NSString *line = nil;
     va_list args;
     va_start(args, format);
-    line = [[NSString alloc] initWithFormat:format arguments:args];
+    NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
     va_end(args);
-    if (!line) return;
 
-    FILE *fp = fopen("/tmp/ZZFilterPlugin-diagnostic.log", "a");
-    if (!fp) return;
-    NSDate *now = [NSDate date];
-    fprintf(fp, "[%0.3f] pid=%d %s\n", now.timeIntervalSince1970, getpid(), line.UTF8String ?: "");
-    fflush(fp);
-    fclose(fp);
+    NSString *line = [NSString stringWithFormat:@"%@ [pid=%d] %@\n", [NSDate date], getpid(), message ?: @""];
+    @try {
+        NSString *path = ZZDiagLogPath();
+        NSFileManager *fm = [NSFileManager defaultManager];
+        if (![fm fileExistsAtPath:path]) {
+            [@"" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        }
+        NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+        if (fh) {
+            [fh seekToEndOfFile];
+            [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+            [fh closeFile];
+        }
+        NSDictionary *attrs = [fm attributesOfItemAtPath:path error:nil];
+        unsigned long long size = [attrs fileSize];
+        if (size > 2 * 1024 * 1024) {
+            NSString *tail = [line copy];
+            [tail writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        }
+    } @catch (__unused NSException *e) {
+    }
+
+    os_log(ZZDebugLog(), "%{public}@", message ?: @"");
 }
 
 void ZZFilterDebugLogBuildInfo(void) {
@@ -41,6 +55,5 @@ void ZZFilterDebugLogBuildInfo(void) {
 #else
     const char *arch = "unknown";
 #endif
-    os_log(ZZDebugLog(), "ZZFilterPlugin DEBUG build; arch=%{public}s; iOS min=16.0", arch);
-    ZZFilterDebugFileLog(@"BUILD arch=%s", arch);
+    ZZDiagLog(@"BUILD arch=%s iOS-min=16.0", arch);
 }
