@@ -21,3 +21,7 @@ This is intended for debugging an authorized host/application integration.
 
 ## Dynamic runtime discovery
 This diagnostic build no longer depends on two hard-coded controller class names. It scans the running authorized host for the known list-rendering selectors and reports discovered/hooked counts. This helps distinguish a class-name mismatch from a real absence of the list-rendering API.
+
+## v6 build note
+- Compile fix: collection values in `ZZProductVisibility` are explicitly cast before using collection-only APIs, avoiding Clang errors such as `property 'count' not found on object of type '__strong id'`.
+- No activation, licensing, or security-bypass logic is included.

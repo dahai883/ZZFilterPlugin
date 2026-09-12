@@ -1,5 +1,4 @@
 #import <Foundation/Foundation.h>
-#import <UIKit/UIKit.h>
 #import "ZZFilterURLProtocol.h"
 #import "ZZSettings.h"
 #import "ZZOverlayController.h"
@@ -43,16 +42,7 @@ static void ZZFilterPluginLoaded(void) {
     ZZInstallUIFiltering();
     ZZInstallRuntimeFiltering();
     dispatch_async(dispatch_get_main_queue(), ^{
-        __block NSInteger ticks = 0;
-        [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(__unused NSTimer *timer) {
-            ticks += 1;
-            ZZInstallRuntimeFiltering();
-            if (ticks >= 30) {
-                // After the first 15 seconds, discovery is still triggered by
-                // the timer but the scanner itself throttles unchanged runtimes.
-            }
-        }];
-        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(__unused NSNotification *note) {
+        [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(__unused NSTimer *timer) {
             ZZInstallRuntimeFiltering();
         }];
     });

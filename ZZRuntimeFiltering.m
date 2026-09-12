@@ -2,187 +2,135 @@
 #import "ZZProductVisibility.h"
 #import "ZZSettings.h"
 #import <objc/runtime.h>
-#import <QuartzCore/QuartzCore.h>
+#import <objc/message.h>
+#import <dlfcn.h>
 
+static NSMutableDictionary<NSString *, NSValue *> *ZZOriginalForwardIMPs;
 static NSMutableSet<NSString *> *ZZHookedSelectors;
 static NSUInteger ZZRuntimeCalls;
-static NSUInteger ZZCandidateMatches;
-static NSUInteger ZZHookFailures;
-static NSUInteger ZZLastScannedClasses;
-static NSUInteger ZZLastScannedMethods;
-static CFTimeInterval ZZLastScanTime;
-static NSUInteger ZZResponseObjects;
-static NSUInteger ZZResponseArrays;
-static NSUInteger ZZResponseDictionaries;
-static NSUInteger ZZResponseUnknown;
 
-static NSArray *ZZFilteredArray(NSArray *models, NSString *selectorName) {
+static BOOL ZZLooksLikeModelArray(id obj) {
+    if (![obj isKindOfClass:NSArray.class]) return NO;
+    NSArray *a = obj;
+    if (!a.count) return YES;
+    NSUInteger inspected = MIN((NSUInteger)6, a.count);
+    NSUInteger modelish = 0;
+    for (NSUInteger i = 0; i < inspected; i++) {
+        id item = a[i];
+        if ([item isKindOfClass:NSDictionary.class] ||
+            [item respondsToSelector:@selector(dictionaryWithValuesForKeys:)]) modelish++;
+    }
+    return modelish > 0;
+}
+
+static void ZZFilterInvocationArguments(NSInvocation *invocation) {
     ZZRuntimeCalls += 1;
-    if (!ZZSettings.shared.enabled || ![models isKindOfClass:NSArray.class]) return models;
-    NSArray *filtered = ZZFilteredModels(models);
-    if (filtered != models) {
-        NSLog(@"[ZZFilterUI] runtime selector=%@ array=%lu -> %lu",
-              selectorName, (unsigned long)models.count, (unsigned long)filtered.count);
+    if (!ZZSettings.shared.enabled) return;
+    const char *types = invocation.methodSignature.methodReturnType;
+    (void)types;
+
+    NSUInteger count = invocation.methodSignature.numberOfArguments;
+    for (NSUInteger i = 2; i < count; i++) {
+        const char *argType = [invocation.methodSignature getArgumentTypeAtIndex:i];
+        if (!argType || argType[0] != '@') continue;
+        __unsafe_unretained id value = nil;
+        [invocation getArgument:&value atIndex:i];
+        if (ZZLooksLikeModelArray(value)) {
+            NSArray *filtered = ZZFilteredModels(value);
+            if (filtered != value) {
+                id replacement = filtered;
+                [invocation setArgument:&replacement atIndex:i];
+                NSLog(@"[ZZFilterUI] runtime selector=%@ array=%lu -> %lu",
+                      NSStringFromSelector(invocation.selector),
+                      (unsigned long)[value count], (unsigned long)[filtered count]);
+            }
+            break;
+        }
     }
-    return filtered;
 }
 
-static NSString *ZZHookKey(Class cls, SEL selector) {
-    return [NSString stringWithFormat:@"%p:%@", cls, NSStringFromSelector(selector)];
+static void ZZForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
+    NSString *key = [NSString stringWithFormat:@"%p:%@", object_getClass(self), NSStringFromSelector(invocation.selector)];
+    NSValue *impValue = ZZOriginalForwardIMPs[key];
+    if (impValue) {
+        ZZFilterInvocationArguments(invocation);
+        SEL alias = NSSelectorFromString([NSString stringWithFormat:@"zz_orig_%@", NSStringFromSelector(invocation.selector)]);
+        invocation.selector = alias;
+        [invocation invokeWithTarget:self];
+        return;
+    }
+
+    // Fall back to the class's original forwarding implementation.
+    NSString *fwdKey = [NSString stringWithFormat:@"%p:forwardInvocation", object_getClass(self)];
+    NSValue *fwdValue = ZZOriginalForwardIMPs[fwdKey];
+    IMP originalFwd = (IMP)[fwdValue pointerValue];
+    if (originalFwd && originalFwd != (IMP)ZZForwardInvocation) {
+        ((void (*)(id, SEL, NSInvocation *))originalFwd)(self, _cmd, invocation);
+        return;
+    }
+    [self doesNotRecognizeSelector:invocation.selector];
 }
 
-// These entry points are ordinary Objective-C methods with object-array/list
-// arguments. Using typed IMP blocks avoids objc_msgForward, which is not
-// exported to all iOS dylib link environments (especially arm64e).
-static IMP ZZMakeAddCells3(IMP original) {
-    return imp_implementationWithBlock(^(id self, NSArray *models, NSInteger section, NSString *className) {
-        NSArray *f = ZZFilteredArray(models, @"addCellsWithModelArray:forSection:className:");
-        ((void (*)(id, SEL, NSArray *, NSInteger, NSString *))original)(self, @selector(addCellsWithModelArray:forSection:className:), f, section, className);
-    });
-}
-
-static IMP ZZMakeAddCells4(IMP original) {
-    return imp_implementationWithBlock(^(id self, NSArray *models, NSInteger section, NSString *className, id tag) {
-        NSArray *f = ZZFilteredArray(models, @"addCellsWithModelArray:forSection:className:tag:");
-        ((void (*)(id, SEL, NSArray *, NSInteger, NSString *, id))original)(self, @selector(addCellsWithModelArray:forSection:className:tag:), f, section, className, tag);
-    });
-}
-
-static IMP ZZMakeInsertCells4(IMP original) {
-    return imp_implementationWithBlock(^(id self, NSArray *models, NSInteger section, NSString *className, NSInteger pos) {
-        NSArray *f = ZZFilteredArray(models, @"insertCellsWithModelArray:forSection:className:pos:");
-        ((void (*)(id, SEL, NSArray *, NSInteger, NSString *, NSInteger))original)(self, @selector(insertCellsWithModelArray:forSection:className:pos:), f, section, className, pos);
-    });
-}
-
-static IMP ZZMakeInsertCells5(IMP original) {
-    return imp_implementationWithBlock(^(id self, NSArray *models, NSInteger section, NSString *className, id tag, NSInteger pos) {
-        NSArray *f = ZZFilteredArray(models, @"insertCellsWithModelArray:forSection:className:tag:pos:");
-        ((void (*)(id, SEL, NSArray *, NSInteger, NSString *, id, NSInteger))original)(self, @selector(insertCellsWithModelArray:forSection:className:tag:pos:), f, section, className, tag, pos);
-    });
-}
-
-static IMP ZZMakePAddCells4(IMP original) {
-    return imp_implementationWithBlock(^(id self, NSArray *models, NSInteger section, NSString *className, id tag) {
-        NSArray *f = ZZFilteredArray(models, @"p_addCellsWithModelArray:forSection:className:tag:");
-        ((void (*)(id, SEL, NSArray *, NSInteger, NSString *, id))original)(self, @selector(p_addCellsWithModelArray:forSection:className:tag:), f, section, className, tag);
-    });
-}
-
-static IMP ZZMakePInsertCells5(IMP original) {
-    return imp_implementationWithBlock(^(id self, NSArray *models, NSInteger section, NSString *className, id tag, NSInteger pos) {
-        NSArray *f = ZZFilteredArray(models, @"p_insertCellsWithModelArray:forSection:className:tag:pos:");
-        ((void (*)(id, SEL, NSArray *, NSInteger, NSString *, id, NSInteger))original)(self, @selector(p_insertCellsWithModelArray:forSection:className:tag:pos:), f, section, className, tag, pos);
-    });
-}
-
-static IMP ZZMakeListingResponse(IMP original) {
-    return imp_implementationWithBlock(^(id self, id response) {
-        ZZRuntimeCalls += 1;
-        // The response object may itself expose a product/model array. Keep
-        // this hook observational unless ZZFilterRenderedData can recognize
-        // the concrete shape; the normal model-array hooks do the filtering.
-        ZZResponseObjects += 1;
-        if ([response isKindOfClass:NSArray.class]) ZZResponseArrays += 1;
-        else if ([response isKindOfClass:NSDictionary.class]) ZZResponseDictionaries += 1;
-        else ZZResponseUnknown += 1;
-        NSLog(@"[ZZFilterUI] response hook selector=addListingGoodsWithRespModel class=%@", response ? NSStringFromClass([response class]) : @"(nil)");
-        ZZResponseObjects += 1;
-        if ([response isKindOfClass:NSArray.class]) ZZResponseArrays += 1;
-        else if ([response isKindOfClass:NSDictionary.class]) ZZResponseDictionaries += 1;
-        else ZZResponseUnknown += 1;
-        NSLog(@"[ZZFilterUI] response hook selector=reloadListingGoodsWithRespModel class=%@", response ? NSStringFromClass([response class]) : @"(nil)");
-        id value = response;
-        id filtered = ZZFilterRenderedData(value);
-        if (filtered && filtered != value) value = filtered;
-        ((void (*)(id, SEL, id))original)(self, @selector(addListingGoodsWithRespModel:), value);
-    });
-}
-
-static IMP ZZMakeReloadResponse(IMP original) {
-    return imp_implementationWithBlock(^(id self, id response) {
-        ZZRuntimeCalls += 1;
-        id value = response;
-        id filtered = ZZFilterRenderedData(value);
-        if (filtered && filtered != value) value = filtered;
-        ((void (*)(id, SEL, id))original)(self, @selector(reloadListingGoodsWithRespModel:), value);
-    });
-}
-
-static IMP ZZBuildWrapperForSelector(SEL selector, IMP original) {
-    NSString *name = NSStringFromSelector(selector);
-    if ([name isEqualToString:@"addCellsWithModelArray:forSection:className:"]) return ZZMakeAddCells3(original);
-    if ([name isEqualToString:@"addCellsWithModelArray:forSection:className:tag:"]) return ZZMakeAddCells4(original);
-    if ([name isEqualToString:@"insertCellsWithModelArray:forSection:className:pos:"]) return ZZMakeInsertCells4(original);
-    if ([name isEqualToString:@"insertCellsWithModelArray:forSection:className:tag:pos:"]) return ZZMakeInsertCells5(original);
-    if ([name isEqualToString:@"p_addCellsWithModelArray:forSection:className:tag:"]) return ZZMakePAddCells4(original);
-    if ([name isEqualToString:@"p_insertCellsWithModelArray:forSection:className:tag:pos:"]) return ZZMakePInsertCells5(original);
-    if ([name isEqualToString:@"addListingGoodsWithRespModel:"]) return ZZMakeListingResponse(original);
-    if ([name isEqualToString:@"reloadListingGoodsWithRespModel:"]) return ZZMakeReloadResponse(original);
-    return NULL;
-}
-
-static BOOL ZZHookSelector(Class cls, SEL selector) {
+static void ZZHookSelector(Class cls, SEL selector) {
+    if (!cls || !selector) return;
     Method method = class_getInstanceMethod(cls, selector);
-    if (!method) return NO;
-    NSString *key = ZZHookKey(cls, selector);
-    if ([ZZHookedSelectors containsObject:key]) return YES;
+    if (!method) return;
 
-    const char *types = method_getTypeEncoding(method);
-    IMP original = method_getImplementation(method);
-    IMP wrapper = ZZBuildWrapperForSelector(selector, original);
-    if (!wrapper) { ZZHookFailures += 1; return NO; }
+    NSString *hookKey = [NSString stringWithFormat:@"%p:%@", cls, NSStringFromSelector(selector)];
+    if ([ZZHookedSelectors containsObject:hookKey]) return;
 
-    // Guard against an unexpected ABI. The expected methods are void-returning
-    // and have only object/integer arguments. If an app update changes the
-    // signature, leave the method untouched instead of risking a crash.
-    NSUInteger args = method_getNumberOfArguments(method);
-    if (args < 3 || args > 7 || !types || types[0] != 'v') {
-        ZZHookFailures += 1;
-        NSLog(@"[ZZFilterUI] skip unexpected signature %@ %@ encoding=%s",
-              NSStringFromClass(cls), NSStringFromSelector(selector), types ?: "(null)");
-        return NO;
+    SEL alias = NSSelectorFromString([NSString stringWithFormat:@"zz_orig_%@", NSStringFromSelector(selector)]);
+    if (!class_getInstanceMethod(cls, alias)) {
+        class_addMethod(cls, alias, method_getImplementation(method), method_getTypeEncoding(method));
     }
 
-    method_setImplementation(method, wrapper);
-    [ZZHookedSelectors addObject:key];
-    NSLog(@"[ZZFilterUI] hooked %@ %@ encoding=%s",
-          NSStringFromClass(cls), NSStringFromSelector(selector), types);
-    return YES;
+    // Install forwardInvocation only once per target class, preserving the
+    // existing implementation for selectors we do not own.
+    Method fwd = class_getInstanceMethod(cls, @selector(forwardInvocation:));
+    IMP originalFwd = fwd ? method_getImplementation(fwd) : NULL;
+    NSString *fwdKey = [NSString stringWithFormat:@"%p:forwardInvocation", cls];
+    if (![ZZOriginalForwardIMPs objectForKey:fwdKey]) {
+        if (originalFwd) ZZOriginalForwardIMPs[fwdKey] = [NSValue valueWithPointer:originalFwd];
+        class_replaceMethod(cls, @selector(forwardInvocation:), (IMP)ZZForwardInvocation, "v@:@");
+    }
+
+    ZZOriginalForwardIMPs[hookKey] = [NSValue valueWithPointer:method_getImplementation(method)];
+    [ZZHookedSelectors addObject:hookKey];
+
+    // Avoid a direct link against objc_msgForward. Some iOS SDK/linker
+    // combinations do not expose that symbol to dylib linkers even though
+    // the runtime can resolve it. Resolve it dynamically instead.
+    IMP forwardingIMP = (IMP)dlsym(RTLD_DEFAULT, "objc_msgForward");
+    if (!forwardingIMP) {
+        NSLog(@"[ZZFilterUI] cannot resolve objc_msgForward; skip %@ %@",
+              NSStringFromClass(cls), NSStringFromSelector(selector));
+        [ZZHookedSelectors removeObject:hookKey];
+        [ZZOriginalForwardIMPs removeObjectForKey:hookKey];
+        return;
+    }
+    method_setImplementation(method, forwardingIMP);
+    NSLog(@"[ZZFilterUI] hooked %@ %@", NSStringFromClass(cls), NSStringFromSelector(selector));
 }
 
-NSUInteger ZZRuntimeFilteringHookCount(void) { return ZZHookedSelectors.count; }
-NSUInteger ZZRuntimeFilteringCalls(void) { return ZZRuntimeCalls; }
-NSUInteger ZZRuntimeFilteringCandidateCount(void) { return ZZCandidateMatches; }
-NSUInteger ZZRuntimeFilteringHookFailureCount(void) { return ZZHookFailures; }
-NSUInteger ZZRuntimeFilteringScannedClasses(void) { return ZZLastScannedClasses; }
-NSUInteger ZZRuntimeFilteringScannedMethods(void) { return ZZLastScannedMethods; }
-NSUInteger ZZRuntimeFilteringResponseObjects(void) { return ZZResponseObjects; }
-NSUInteger ZZRuntimeFilteringResponseArrays(void) { return ZZResponseArrays; }
-NSUInteger ZZRuntimeFilteringResponseDictionaries(void) { return ZZResponseDictionaries; }
-NSUInteger ZZRuntimeFilteringResponseUnknown(void) { return ZZResponseUnknown; }
+NSUInteger ZZRuntimeFilteringHookCount(void) {
+    return ZZHookedSelectors.count;
+}
+
+NSUInteger ZZRuntimeFilteringCalls(void) {
+    return ZZRuntimeCalls;
+}
 
 void ZZInstallRuntimeFiltering(void) {
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
+    static dispatch_once_t initOnce;
+    dispatch_once(&initOnce, ^{
+        ZZOriginalForwardIMPs = [NSMutableDictionary dictionary];
         ZZHookedSelectors = [NSMutableSet set];
     });
 
-    int classCount = objc_getClassList(NULL, 0);
-    if (classCount <= 0) return;
-
-    CFTimeInterval now = CACurrentMediaTime();
-    // Avoid rescanning ~70k methods every second forever. Re-scan when the
-    // runtime grows, or periodically while no hook has been installed yet.
-    if (ZZHookedSelectors.count > 0 && (NSUInteger)classCount == ZZLastScannedClasses) return;
-    if (ZZHookedSelectors.count == 0 && (now - ZZLastScanTime) < 2.0 && (NSUInteger)classCount == ZZLastScannedClasses) return;
-
-    Class *classes = (__unsafe_unretained Class *)calloc((size_t)classCount, sizeof(Class));
-    int actual = objc_getClassList(classes, classCount);
-    NSUInteger methodsSeen = 0;
-    NSUInteger candidatesThisScan = 0;
-
-    NSSet *targets = [NSSet setWithArray:@[
+    // The reference build exposes these list-rendering selectors.  Instead of
+    // assuming a particular controller class name, discover classes that
+    // actually implement the selectors in the running, authorized host.
+    NSArray<NSString *> *selectors = @[
         @"addCellsWithModelArray:forSection:className:",
         @"addCellsWithModelArray:forSection:className:tag:",
         @"insertCellsWithModelArray:forSection:className:pos:",
@@ -191,31 +139,42 @@ void ZZInstallRuntimeFiltering(void) {
         @"p_insertCellsWithModelArray:forSection:className:tag:pos:",
         @"addListingGoodsWithRespModel:",
         @"reloadListingGoodsWithRespModel:"
-    ]];
+    ];
+
+    int classCount = objc_getClassList(NULL, 0);
+    if (classCount <= 0) {
+        NSLog(@"[ZZFilterUI] runtime discovery: no classes yet");
+        return;
+    }
+
+    Class *classes = (__unsafe_unretained Class *)calloc((size_t)classCount, sizeof(Class));
+    int actual = objc_getClassList(classes, classCount);
+    NSUInteger discovered = 0;
+    NSUInteger newlyHooked = 0;
 
     for (int i = 0; i < actual; i++) {
         Class cls = classes[i];
-        unsigned int count = 0;
-        Method *methods = class_copyMethodList(cls, &count);
+        if (!cls) continue;
+
+        unsigned int methodCount = 0;
+        Method *methods = class_copyMethodList(cls, &methodCount);
         if (!methods) continue;
-        methodsSeen += count;
-        for (unsigned int m = 0; m < count; m++) {
-            SEL sel = method_getName(methods[m]);
-            if (![targets containsObject:NSStringFromSelector(sel)]) continue;
-            candidatesThisScan += 1;
-            ZZCandidateMatches += 1;
-            NSLog(@"[ZZFilterUI] candidate class=%@ selector=%@", NSStringFromClass(cls), NSStringFromSelector(sel));
-            ZZHookSelector(cls, sel);
+
+        for (unsigned int m = 0; m < methodCount; m++) {
+            SEL implemented = method_getName(methods[m]);
+            NSString *name = NSStringFromSelector(implemented);
+            if (![selectors containsObject:name]) continue;
+            discovered++;
+
+            NSUInteger before = ZZHookedSelectors.count;
+            ZZHookSelector(cls, implemented);
+            if (ZZHookedSelectors.count > before) newlyHooked++;
         }
         free(methods);
     }
     free(classes);
 
-    ZZLastScannedClasses = (NSUInteger)actual;
-    ZZLastScannedMethods = methodsSeen;
-    ZZLastScanTime = now;
-    NSLog(@"[ZZFilterUI] runtime discovery v5: classes=%d methods=%lu candidates=%lu totalCandidates=%lu hookFailures=%lu totalHooked=%lu",
-          actual, (unsigned long)methodsSeen, (unsigned long)candidatesThisScan,
-          (unsigned long)ZZCandidateMatches, (unsigned long)ZZHookFailures,
+    NSLog(@"[ZZFilterUI] runtime discovery: classes=%d methods=%lu newlyHooked=%lu totalHooked=%lu",
+          actual, (unsigned long)discovered, (unsigned long)newlyHooked,
           (unsigned long)ZZHookedSelectors.count);
 }
