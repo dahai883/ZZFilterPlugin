@@ -43,3 +43,9 @@ Observed selector names used only as interoperability targets:
 The revision remains activation-free: it does not reproduce or bypass token, RSA, signature, licensing, or authorization checks from the reference binary.
 
 The build environment is macOS/Xcode via GitHub Actions. This container does not include Apple's iPhoneOS SDK, so the archive contains the updated source/workflow rather than a newly compiled iOS dylib.
+
+## UI discovery v2
+This build replaces the initial class-list size-query with `objc_copyClassList`,
+and accepts the reference selector families plus narrowly-scoped prefixes. This
+is intended to diagnose host-app UI API changes without touching activation,
+token, or authorization routines.

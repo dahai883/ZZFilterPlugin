@@ -177,17 +177,22 @@ void ZZInstallRuntimeFiltering(void) {
         ];
     });
 
-    int count = objc_getClassList(NULL, 0);
-    if (count <= 0) {
-        NSLog(@"[ZZFilterUI] discovery classes=0");
+    // Use objc_copyClassList rather than the two-call objc_getClassList pattern.
+    // Some injected/runtime environments can report zero from the size-query
+    // form even though classes are already registered.
+    unsigned int actual = 0;
+    Class *classes = objc_copyClassList(&actual);
+    if (!classes || actual == 0) {
+        if (classes) free(classes);
+        NSLog(@"[ZZFilterUI] discovery classListUnavailable count=%u", actual);
         return;
     }
-    Class *classes = (__unsafe_unretained Class *)calloc((size_t)count, sizeof(Class));
-    int actual = objc_getClassList(classes, count);
+
     NSUInteger matches = 0;
+    NSUInteger broadMatches = 0;
     NSUInteger before = ZZHooked.count;
 
-    for (int i = 0; i < actual; i++) {
+    for (unsigned int i = 0; i < actual; i++) {
         Class cls = classes[i];
         if (!cls) continue;
         unsigned int methodCount = 0;
@@ -196,8 +201,21 @@ void ZZInstallRuntimeFiltering(void) {
         for (unsigned int j = 0; j < methodCount; j++) {
             SEL sel = method_getName(methods[j]);
             NSString *selName = NSStringFromSelector(sel);
-            if ([names containsObject:selName]) {
+            BOOL exact = [names containsObject:selName];
+            // The reference exposes these families; tolerate a renamed/private
+            // selector in a newer host build while avoiding unrelated methods.
+            BOOL broad = [selName hasPrefix:@"addCellWithModel:"] ||
+                         [selName hasPrefix:@"addCellsWithModelArray:"] ||
+                         [selName hasPrefix:@"insertCellsWithModelArray:"] ||
+                         [selName hasPrefix:@"p_addCellsWithModelArray:"] ||
+                         [selName hasPrefix:@"p_insertCellsWithModelArray:"] ||
+                         [selName hasPrefix:@"reloadListingGoodsWithRespModel:"] ||
+                         [selName hasPrefix:@"addListingGoodsWithRespModel:"] ||
+                         [selName hasPrefix:@"requestDataWithPageIndex:"] ||
+                         [selName hasPrefix:@"setPageIndex:"];
+            if (exact || broad) {
                 matches++;
+                if (broad && !exact) broadMatches++;
                 ZZHookClassSelector(cls, sel);
             }
         }
@@ -205,8 +223,8 @@ void ZZInstallRuntimeFiltering(void) {
     }
     free(classes);
 
-    NSLog(@"[ZZFilterUI] discovery classes=%d selectorMatches=%lu newlyHooked=%lu totalHooked=%lu calls=%lu",
-          actual, (unsigned long)matches,
+    NSLog(@"[ZZFilterUI] discovery classes=%u selectorMatches=%lu broad=%lu newlyHooked=%lu totalHooked=%lu calls=%lu",
+          actual, (unsigned long)matches, (unsigned long)broadMatches,
           (unsigned long)(ZZHooked.count - before),
           (unsigned long)ZZHooked.count,
           (unsigned long)ZZCalls);
