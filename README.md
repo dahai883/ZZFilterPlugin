@@ -1,19 +1,20 @@
-# ZZFilterPlugin v27
+# ZZFilterPlugin v28
 
-独立的转转系统版本筛选测试插件；不包含激活码、授权或签名绕过逻辑。
+独立实现的 iOS 商品列表“系统版本”筛选测试插件。v28 重点修复 **详情预取有请求但详情命中始终为 0、结果列表无法显示 iOS 版本** 的问题。
 
-## 本版关键修复
-- 修复 v26：`ZZFindVersionDeep` 原来不处理 `NSArray`，而转转商品属性常见 `[{key,value}]` 数组结构，因此“详情命中 0”、范围筛选 0 条、结果标题没有 `iOS x.y.z`。
-- 版本解析现在支持数组、`itemId2AttrInfo`、`respData/report`、嵌套 JSON 字符串。
-- 识别成功后写入 `zzSystemVersion`，结果页、范围判断和标题统一读取规范化版本。
-- 保留定点列表 Hook，不恢复 v11 的全量 Runtime 扫描，避免高 CPU/发热/Watchdog。
-- 标题继续显示 `iOS x.y.z`，并去除显示层“钛金属”“全网通”。
+## v28 改动
+
+- 深化系统版本解析：支持 `系统版本 / iOS版本 / systemVersion / iosVersion` 等字段。
+- 支持 `params / attrs / attributes / detail / respData / report / itemId2AttrInfo` 的嵌套数组/字典。
+- 支持 `{key:"系统版本", value:"18.6.2"}` 这类没有 `iOS` 前缀的数据。
+- 支持从扁平文本中恢复 `iOS 18.6.2`、`系统版本：18.6.2`。
+- 详情接口返回非 JSON 文本时也尝试提取系统版本。
+- 状态窗口新增“详情响应”，用于区分“请求没返回”和“返回了但解析不到版本”。
+- 继续避免全量 Runtime 扫描，避免 v11 的高 CPU/发热/Watchdog 问题。
+- 结果列表保留 `iOS x.y.z`、复制/打开和标题清理功能。
 
 ## 编译
-GitHub Actions：iOS 16+，arm64 / arm64e。
 
-## 建议测试
-1. 不设置范围：结果页应出现 `｜ iOS x.y.z`。
-2. 设置 `18.0.0 ~ 27.0.0`：结果不应再固定为 0 条。
-3. 状态中的“详情命中”应大于 0。
-4. 观察 CPU、发热和稳定性。
+GitHub Actions 手动运行 `.github/workflows/build.yml`，目标 iOS 16+，arm64/arm64e。
+
+本项目是独立过滤实现，不包含原插件的激活、授权校验、RSA 验签或绕过逻辑。

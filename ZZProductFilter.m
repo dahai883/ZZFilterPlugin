@@ -17,8 +17,13 @@
 static NSString *ZZNormalizeVersion(NSString *value) {
     if (![value isKindOfClass:NSString.class]) return @"";
     NSString *s = [value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"(?i)^(?:iOS\\s*)?(\\d{1,3})(?:\\.(\\d{1,3}))?(?:\\.(\\d{1,3}))?\\s*$" options:0 error:NULL];
+    if (!s.length) return @"";
+    NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"(?i)^(?:ios|iPhone\s*OS|os)\\s*[:：-]?\\s*(\\d{1,3})(?:\\.(\\d{1,3}))?(?:\\.(\\d{1,3}))?\\s*$" options:0 error:NULL];
     NSTextCheckingResult *m = [re firstMatchInString:s options:0 range:NSMakeRange(0, s.length)];
+    if (!m) {
+        re = [NSRegularExpression regularExpressionWithPattern:@"^(\\d{1,3})(?:\\.(\\d{1,3}))?(?:\\.(\\d{1,3}))?$" options:0 error:NULL];
+        m = [re firstMatchInString:s options:0 range:NSMakeRange(0, s.length)];
+    }
     if (!m) return @"";
     NSMutableArray *parts = [NSMutableArray arrayWithCapacity:3];
     for (NSUInteger i = 1; i <= 3; i++) {
@@ -32,51 +37,59 @@ static BOOL ZZLooksLikeSystemVersionLabel(NSString *key) {
     if (![key isKindOfClass:NSString.class]) return NO;
     NSString *k = key.lowercaseString;
     return [k containsString:@"ios"] ||
+           [k containsString:@"iphoneos"] ||
            [k containsString:@"systemversion"] ||
            [k containsString:@"system_version"] ||
            [k containsString:@"system version"] ||
            [k containsString:@"系统版本"] ||
            [k containsString:@"系统版本号"] ||
+           ([k containsString:@"系统"] && [k containsString:@"版本"]) ||
            [k containsString:@"ios版本"] ||
            [k containsString:@"ios版本号"] ||
-           [k containsString:@"os版本"];
+           [k containsString:@"os版本"] ||
+           [k isEqualToString:@"os"];
+}
+
+static NSString *ZZExtractVersionFromText(NSString *value) {
+    if (![value isKindOfClass:NSString.class] || !value.length) return @"";
+
+    // Explicit iOS/iPhone OS marker is always safe to accept.
+    NSRegularExpression *iosRe = [NSRegularExpression regularExpressionWithPattern:@"(?i)\\b(?:ios|iphone\\s*os|ipad\\s*os)\\s*(?:版本|version)?\\s*[:：-]?\\s*(\\d{1,3}(?:\\.\\d{1,3}){0,2})\\b" options:0 error:NULL];
+    NSTextCheckingResult *m = [iosRe firstMatchInString:value options:0 range:NSMakeRange(0, value.length)];
+    if (m) {
+        NSRange r = [m rangeAtIndex:1];
+        if (r.location != NSNotFound) return ZZNormalizeVersion([value substringWithRange:r]);
+    }
+
+    // Detail payloads sometimes flatten the Chinese label and numeric value.
+    NSRegularExpression *cnRe = [NSRegularExpression regularExpressionWithPattern:@"(?:系统版本(?:号)?|系统\\s*版本|OS版本)\\s*[:：=]?\\s*(?:iOS\\s*)?(\\d{1,3}(?:\\.\\d{1,3}){0,2})" options:NSRegularExpressionCaseInsensitive error:NULL];
+    m = [cnRe firstMatchInString:value options:0 range:NSMakeRange(0, value.length)];
+    if (m) {
+        NSRange r = [m rangeAtIndex:1];
+        if (r.location != NSNotFound) return ZZNormalizeVersion([value substringWithRange:r]);
+    }
+    return @"";
 }
 
 static BOOL ZZStringContainsIOSMarker(NSString *value) {
     if (![value isKindOfClass:NSString.class]) return NO;
     NSString *s = value.lowercaseString;
-    return [s containsString:@"ios"];
+    return [s containsString:@"ios"] || [s containsString:@"iphone os"] || [s containsString:@"ipad os"];
 }
 
-static NSString *ZZExtractIOSVersionFromText(NSString *value) {
-    if (![value isKindOfClass:NSString.class] || !value.length) return @"";
-    NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"(?i)\\bios\\s*(\\d{1,3}(?:\\.\\d{1,3}){0,2})\\b" options:0 error:NULL];
-    NSTextCheckingResult *m = [re firstMatchInString:value options:0 range:NSMakeRange(0, value.length)];
-    if (!m) return @"";
-    NSRange r = [m rangeAtIndex:1];
-    if (r.location == NSNotFound) return @"";
-    return ZZNormalizeVersion([value substringWithRange:r]);
-}
-
-// Extract only the actual iOS/system-version attribute. V15 accidentally
-// preferred the generic `version` field, which is commonly the app/model
-// version (1.0.0). V16 deliberately gives system-version-labelled fields and
-// key/value attribute pairs priority and ignores an unlabelled generic 1.0.0.
+// Deep extraction is deliberately conservative for generic `version=1.0.0`,
+// but broad for the real system-version attribute. v28 additionally handles
+// the response shapes observed in detail payloads: params arrays, nested
+// key/value objects, flattened text, and numeric values under a system label.
 static NSString *ZZFindVersionDeep(id obj, NSUInteger depth) {
-    if (depth > 10 || !obj) return @"";
+    if (depth > 14 || !obj) return @"";
+
     if ([obj isKindOfClass:NSString.class]) {
-        NSString *s = (NSString *)obj;
-        if (ZZStringContainsIOSMarker(s)) {
-            NSString *v = ZZNormalizeVersion(s);
-            if (v.length) return v;
-            v = ZZExtractIOSVersionFromText(s);
-            if (v.length) return v;
-        }
-        return @"";
+        return ZZExtractVersionFromText((NSString *)obj);
     }
-    // v26's critical bug: the recursive extractor rejected NSArray entirely.
-    // Zhuanzhuan commonly stores attributes as arrays of {key,value} objects,
-    // so a valid 系统版本/iOS value could never reach the dictionary parser.
+
+    if ([obj isKindOfClass:NSNumber.class]) return @"";
+
     if ([obj isKindOfClass:NSArray.class]) {
         for (id child in (NSArray *)obj) {
             NSString *v = ZZFindVersionDeep(child, depth + 1);
@@ -84,88 +97,103 @@ static NSString *ZZFindVersionDeep(id obj, NSUInteger depth) {
         }
         return @"";
     }
-    if (![obj isKindOfClass:NSDictionary.class]) return @"";
 
+    if (![obj isKindOfClass:NSDictionary.class]) return @"";
     NSDictionary *d = (NSDictionary *)obj;
-    NSString *canonical = d[@"zzSystemVersion"];
+
+    id canonical = d[@"zzSystemVersion"];
     if ([canonical isKindOfClass:NSString.class]) {
         NSString *v = ZZNormalizeVersion(canonical);
         if (v.length) return v;
     }
 
-    // Common direct system-version fields. Never let generic `version` win first.
-    NSArray *priorityKeys = @[@"iosVersion", @"iOSVersion", @"systemVersion", @"system_version", @"ios_version", @"ios", @"system"];
+    NSArray *priorityKeys = @[
+        @"iosVersion", @"iOSVersion", @"ios_version", @"systemVersion", @"system_version",
+        @"systemVersionName", @"system_version_name", @"iphoneOSVersion", @"iphoneOsVersion",
+        @"osVersion", @"os_version", @"ios", @"system"
+    ];
     for (NSString *key in priorityKeys) {
         id value = d[key];
         if ([value isKindOfClass:NSString.class]) {
             NSString *v = ZZNormalizeVersion(value);
             if (v.length) return v;
-        } else if ([value respondsToSelector:@selector(stringValue)]) {
-            NSString *v = ZZNormalizeVersion([value stringValue]);
+            v = ZZExtractVersionFromText(value);
+            if (v.length) return v;
+        } else if ([value isKindOfClass:NSDictionary.class] || [value isKindOfClass:NSArray.class]) {
+            NSString *v = ZZFindVersionDeep(value, depth + 1);
             if (v.length) return v;
         }
     }
 
-    // Zhuanzhuan detail attributes often arrive as {key: "系统版本", value: "iOS 26.4.1"}.
-    id label = d[@"key"] ?: d[@"name"] ?: d[@"attrName"] ?: d[@"attributeName"] ?: d[@"title"];
-    id value = d[@"value"] ?: d[@"attrValue"] ?: d[@"attributeValue"] ?: d[@"content"];
+    id label = d[@"key"] ?: d[@"name"] ?: d[@"attrName"] ?: d[@"attributeName"] ?: d[@"title"] ?: d[@"label"];
+    id value = d[@"value"] ?: d[@"attrValue"] ?: d[@"attributeValue"] ?: d[@"content"] ?: d[@"displayValue"];
     if ([label isKindOfClass:NSString.class] && ZZLooksLikeSystemVersionLabel(label)) {
         if ([value isKindOfClass:NSString.class]) {
             NSString *v = ZZNormalizeVersion(value);
             if (v.length) return v;
-        } else if ([value respondsToSelector:@selector(stringValue)]) {
+            v = ZZExtractVersionFromText(value);
+            if (v.length) return v;
+        } else if ([value isKindOfClass:NSNumber.class]) {
             NSString *v = ZZNormalizeVersion([value stringValue]);
             if (v.length) return v;
-        }
-    }
-
-    // Some payloads use arbitrary attribute names but put the literal iOS marker
-    // in the value. Accept those only from value/content-style fields, not generic
-    // `version`, so 1.0.0 is never mistaken for the system version.
-    for (NSString *key in @[@"value", @"attrValue", @"attributeValue", @"content", @"text", @"displayValue"]) {
-        id candidate = d[key];
-        if ([candidate isKindOfClass:NSString.class] && ZZStringContainsIOSMarker(candidate)) {
-            NSString *v = ZZNormalizeVersion(candidate);
+        } else if ([value isKindOfClass:NSDictionary.class] || [value isKindOfClass:NSArray.class]) {
+            NSString *v = ZZFindVersionDeep(value, depth + 1);
             if (v.length) return v;
         }
     }
 
-    // Recurse through system/detail-labelled branches first.
-    for (NSString *key in d) {
-        if (!ZZLooksLikeSystemVersionLabel(key) && ![key.lowercaseString containsString:@"detail"] && ![key.lowercaseString containsString:@"attr"]) continue;
-        NSString *v = ZZFindVersionDeep(d[key], depth + 1);
-        if (v.length) return v;
-    }
-    for (NSString *key in d) {
+    // Attribute records can use `params`, `attributes`, `attrs`, `infos`, etc.
+    // Recurse into these before generic dictionary values.
+    NSArray *preferredBranches = @[@"params", @"attributes", @"attrs", @"attributeList", @"attrList", @"itemId2AttrInfo", @"detail", @"detailInfo", @"detailData", @"respData", @"report", @"data", @"result"];
+    for (NSString *key in preferredBranches) {
         id child = d[key];
-        if ([child isKindOfClass:NSDictionary.class] || [child isKindOfClass:NSArray.class]) {
+        if ([child isKindOfClass:NSDictionary.class] || [child isKindOfClass:NSArray.class] || [child isKindOfClass:NSString.class]) {
             NSString *v = ZZFindVersionDeep(child, depth + 1);
             if (v.length) return v;
         }
     }
 
-    // Last-resort textual fallback: if the payload has already flattened the
-    // attribute into a description/JSON string, recover an explicit "iOS x.y.z"
-    // marker. This is deliberately after structured fields to avoid treating
-    // unrelated numeric versions such as 1.0.0 as the system version.
+    // Any value/content/display field containing an explicit iOS marker is safe.
+    for (NSString *key in @[@"value", @"attrValue", @"attributeValue", @"content", @"text", @"displayValue", @"detailText", @"rawText", @"responseText", @"bodyText"]) {
+        id candidate = d[key];
+        if ([candidate isKindOfClass:NSString.class]) {
+            NSString *v = ZZExtractVersionFromText(candidate);
+            if (v.length) return v;
+        }
+    }
+
+    // Contextual keys may contain a flattened label/value string.
     for (NSString *key in d) {
         id candidate = d[key];
         if (![candidate isKindOfClass:NSString.class]) continue;
         NSString *lowerKey = key.lowercaseString;
         BOOL contextual = ZZLooksLikeSystemVersionLabel(key) ||
-                          [lowerKey containsString:@"version"] ||
-                          [lowerKey containsString:@"os"];
+                           [lowerKey containsString:@"version"] ||
+                           [lowerKey containsString:@"os"] ||
+                           [lowerKey containsString:@"detail"] ||
+                           [lowerKey containsString:@"attr"];
         if (!contextual) continue;
-        NSString *v = ZZExtractIOSVersionFromText(candidate);
+        NSString *v = ZZExtractVersionFromText(candidate);
         if (v.length) return v;
     }
 
-    // Generic version/modelVersion/etc. are intentionally NOT treated as iOS
-    // version unless their value explicitly contains the iOS marker.
-    for (NSString *key in @[@"version", @"modelVersion", @"goodsVersion", @"waresVersion"]) {
+    // Generic version/modelVersion/etc. only count if the value itself clearly
+    // identifies iOS. This preserves the v15 regression guard for 1.0.0.
+    for (NSString *key in @[@"version", @"modelVersion", @"goodsVersion", @"waresVersion", @"appVersion"]) {
         id candidate = d[key];
         if ([candidate isKindOfClass:NSString.class] && ZZStringContainsIOSMarker(candidate)) {
-            NSString *v = ZZNormalizeVersion(candidate);
+            NSString *v = ZZExtractVersionFromText(candidate);
+            if (!v.length) v = ZZNormalizeVersion(candidate);
+            if (v.length) return v;
+        }
+    }
+
+    // Last pass over nested containers. This is bounded by depth to avoid the
+    // expensive global runtime scan that caused the v11 watchdog issue.
+    for (NSString *key in d) {
+        id child = d[key];
+        if ([child isKindOfClass:NSDictionary.class] || [child isKindOfClass:NSArray.class]) {
+            NSString *v = ZZFindVersionDeep(child, depth + 1);
             if (v.length) return v;
         }
     }
@@ -200,11 +228,7 @@ static NSComparisonResult ZZCompareVersions(NSString *a, NSString *b) {
     if (!self.enabled || ![product isKindOfClass:NSDictionary.class]) return YES;
     if (!self.minimumVersion.length && !self.maximumVersion.length) return YES;
     NSString *version = ZZFindVersionDeep(product, 0);
-    // When a version range is explicitly set, unknown-version items cannot be
-    // considered a valid match. This prevents the result sheet from showing
-    // products outside the requested range merely because their detail has not
-    // been resolved yet. Without a range, unknown versions remain visible.
-    if (!version.length) return (!self.minimumVersion.length && !self.maximumVersion.length);
+    if (!version.length) return NO;
     if (self.minimumVersion.length && ZZCompareVersions(version, self.minimumVersion) == NSOrderedAscending) return NO;
     if (self.maximumVersion.length && ZZCompareVersions(version, self.maximumVersion) == NSOrderedDescending) return NO;
     return YES;

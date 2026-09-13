@@ -32,6 +32,10 @@
     return self;
 }
 
+static NSUInteger ZZDetailHTTPResponseCount;
+
+NSUInteger ZZDetailHTTPResponses(void) { return ZZDetailHTTPResponseCount; }
+
 static NSString *ZZQueryValue(NSURL *url, NSArray<NSString *> *names) {
     if (!url) return @"";
     for (NSURLQueryItem *item in [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO].queryItems ?: @[]) {
@@ -203,15 +207,36 @@ static void ZZAppendQueryItemsFromURL(NSMutableArray<NSURLQueryItem *> *items, N
                 if ([response isKindOfClass:NSHTTPURLResponse.class]) {
                     NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
                     ZZStoreResponseCookies(http, response.URL ?: request.URL);
+                    @synchronized (self) { ZZDetailHTTPResponseCount += 1; }
+                    NSString *contentType = http.allHeaderFields[@"Content-Type"] ?: http.allHeaderFields[@"content-type"] ?: @"";
                     ZZFilterDebugWrite(@"[ZZFilterDetail] response status=%ld type=%@ bytes=%lu url=%@",
-                                       (long)http.statusCode, http.allHeaderFields[@"Content-Type"] ?: @"",
+                                       (long)http.statusCode, contentType,
                                        (unsigned long)data.length, request.URL.absoluteString ?: @"");
                 }
                 if (error) {
                     @synchronized (self) { if (!firstError) firstError = error; }
                 } else if (data.length) {
-                    id obj = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:NULL];
-                    [self collectEntriesFromObject:obj fallbackProductID:pid into:entries lock:entriesLock];
+                    NSError *jsonError = nil;
+                    id obj = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:&jsonError];
+                    if (obj) {
+                        [self collectEntriesFromObject:obj fallbackProductID:pid into:entries lock:entriesLock];
+                    } else {
+                        NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+                        if (!text.length) text = [[NSString alloc] initWithData:data encoding:NSASCIIStringEncoding];
+                        if (text.length) {
+                            // Some detail endpoints return HTML or a JSON string wrapper.
+                            // Keep the raw text on the candidate so the v28 extractor can
+                            // recover an explicit iOS/system-version marker.
+                            NSMutableDictionary *candidate = [NSMutableDictionary dictionary];
+                            candidate[@"productId"] = pid;
+                            candidate[@"detailText"] = text;
+                            NSString *version = ZZProductVersionFromDictionary(candidate);
+                            if (version.length) {
+                                candidate[@"zzSystemVersion"] = version;
+                                @synchronized (entriesLock) { [entries addObject:candidate.copy]; }
+                            }
+                        }
+                    }
                 }
                 dispatch_semaphore_signal(slots);
                 dispatch_group_leave(group);

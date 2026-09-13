@@ -4,6 +4,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 typedef void (^ZZDetailCompletion)(NSArray<NSDictionary *> *entries, NSError * _Nullable error);
 
+FOUNDATION_EXPORT NSUInteger ZZDetailHTTPResponses(void);
+
 @interface ZZDetailFetcher : NSObject
 + (instancetype)shared;
 @property(nonatomic, strong) NSURLSession *session;

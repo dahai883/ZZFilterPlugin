@@ -69,6 +69,18 @@ BOOL ZZFilterDebugSelfTest(void) {
         };
         ok &= ZZAssert([ZZProductVersionFromDictionary(mapped) isEqualToString:@"26.4.1"], @"itemId2AttrInfo array extracts system version");
 
+        NSDictionary *numericLabel = @{
+            @"id": @"numeric-1",
+            @"params": @[ @{ @"key": @"系统版本", @"value": @"18.6.2" } ]
+        };
+        ok &= ZZAssert([ZZProductVersionFromDictionary(numericLabel) isEqualToString:@"18.6.2"], @"numeric system-version label extracts without iOS prefix");
+
+        NSDictionary *flattened = @{
+            @"id": @"text-1",
+            @"detailText": @"商品参数：系统版本：iOS 18.7.1，容量：256G"
+        };
+        ok &= ZZAssert([ZZProductVersionFromDictionary(flattened) isEqualToString:@"18.7.1"], @"flattened detail text extracts system version");
+
         NSData *json = [NSJSONSerialization dataWithJSONObject:@{
             @"items": @[good, low, high, old, newer]
         } options:0 error:nil];
