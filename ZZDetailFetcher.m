@@ -123,9 +123,9 @@ static void ZZAppendQueryItemsFromURL(NSMutableArray<NSURLQueryItem *> *items, N
     [sourceHeaders enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSString *value, BOOL *stop) {
         NSString *lower = key.lowercaseString;
         BOOL allowedName = [allowed containsObject:key] ||
-                           [@["accept", "authorization", "cookie", "user-agent", "referer", "origin",
-                              "zzreqsign", "zzreqt", "zzreqallparam", "zzreqversion", "x-requested-with",
-                              "x-device-id", "x-api-version"] containsObject:lower];
+                           [@[@"accept", @"authorization", @"cookie", @"user-agent", @"referer", @"origin",
+                              @"zzreqsign", @"zzreqt", @"zzreqallparam", @"zzreqversion", @"x-requested-with",
+                              @"x-device-id", @"x-api-version"] containsObject:lower];
         if (allowedName && key.length && value.length) [request setValue:value forHTTPHeaderField:key];
         (void)stop;
     }];

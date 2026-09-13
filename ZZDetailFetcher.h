@@ -5,6 +5,7 @@ NS_ASSUME_NONNULL_BEGIN
 typedef void (^ZZDetailCompletion)(NSArray<NSDictionary *> *entries, NSError * _Nullable error);
 
 @interface ZZDetailFetcher : NSObject
++ (instancetype)shared;
 @property(nonatomic, strong) NSURLSession *session;
 
 /// Fetches lightweight detail responses for product IDs. This is an

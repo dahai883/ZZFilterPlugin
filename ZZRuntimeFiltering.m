@@ -138,7 +138,7 @@ void ZZInstallRuntimeFiltering(void) {
     @synchronized (ZZRuntimeLock()) {
         NSArray<Class> *classes = ZZKnownListingClasses();
         if (!classes.count) {
-            ZZFilterDebugWrite(@"[ZZFilterUI] v25 known listing controllers not loaded yet");
+            ZZFilterDebugWrite(@"[ZZFilterUI] v26 known listing controllers not loaded yet");
             return;
         }
 
@@ -162,7 +162,7 @@ void ZZInstallRuntimeFiltering(void) {
                 }
             }
         }
-        ZZFilterDebugWrite(@"[ZZFilterUI] v25 targeted hooks installed=%lu classes=%lu", (unsigned long)ZZRuntimeHooks, (unsigned long)classes.count);
+        ZZFilterDebugWrite(@"[ZZFilterUI] v26 targeted hooks installed=%lu classes=%lu", (unsigned long)ZZRuntimeHooks, (unsigned long)classes.count);
     }
 }
 
@@ -170,7 +170,7 @@ NSUInteger ZZRuntimeFilteringHookCount(void) { return ZZRuntimeHooks; }
 NSUInteger ZZRuntimeFilteringCalls(void) { return ZZRuntimeCalls; }
 NSUInteger ZZRuntimeCandidateCount(void) { return ZZRuntimeCandidates; }
 NSString *ZZRuntimeDiagnosticSummary(void) {
-    return [NSString stringWithFormat:@"v25 targeted listing hooks=%lu", (unsigned long)ZZRuntimeHooks];
+    return [NSString stringWithFormat:@"v26 targeted listing hooks=%lu", (unsigned long)ZZRuntimeHooks];
 }
 
 static IMP ZZResolvePageIMP(id controller, SEL sel) {

@@ -24,6 +24,19 @@ for p in root.glob('*.m'):
             print('FAIL ZZOverlayController.m: outer controller methods are not inside the outer implementation')
             fail = True
     print(f'CHECK {p.name}: implementations={impls}, @end={ends}')
+
+# Cross-file declaration sanity checks for class singleton calls. This catches the
+# exact v25 failure ([ZZDetailFetcher shared]) before GitHub Actions does.
+headers = "\n".join(x.read_text(errors="replace") for x in root.glob("*.h"))
+impl_text = "\n".join(x.read_text(errors="replace") for x in root.glob("*.m"))
+for cls in ["ZZDetailFetcher", "ZZProductVisibility", "ZZSettings", "ZZOverlayController"]:
+    if f"[{cls} shared]" in impl_text and f"+ (instancetype)shared;" not in headers and f"+ (id)shared;" not in headers:
+        print(f"FAIL missing +shared declaration for {cls}")
+        fail = True
+if '@["' in impl_text:
+    print("FAIL malformed Objective-C array literal token @[\" detected")
+    fail = True
+
 if fail:
     sys.exit(1)
 print('STRUCTURE CHECK PASSED')
