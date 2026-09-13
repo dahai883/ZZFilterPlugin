@@ -1,4 +1,4 @@
-# ZZFilterPlugin v29
+# ZZFilterPlugin v31
 
 独立实现的 iOS 商品列表“系统版本”筛选测试插件。v29 针对 **“详情响应已经有 36 条，但详情命中仍为 0”** 做了第二轮深入修复。
 
@@ -23,4 +23,5 @@
 
 GitHub Actions 手动运行 `.github/workflows/build.yml`，目标 iOS 16+，arm64/arm64e。
 
-本项目是独立过滤实现，不包含原插件的激活、授权校验、RSA 验签或绕过逻辑。
+
+- v31：针对 v30 中“详情预取有请求、但 2xx=0 且失败=全部”的现象，收紧详情请求 query 上下文，改用 default session，并放宽蜂窝/受限网络条件；同时保留多层 JSON 与数字类型系统版本解析。

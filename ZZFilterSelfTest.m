@@ -69,7 +69,10 @@ BOOL ZZFilterDebugSelfTest(void) {
         };
         ok &= ZZAssert([ZZProductVersionFromDictionary(mapped) isEqualToString:@"26.4.1"], @"itemId2AttrInfo array extracts system version");
 
-        NSDictionary *numericLabel = @{
+        NSDictionary *numericIOS = @{@"ios": @18.6};
+    ok &= ZZAssert([ZZProductVersionFromDictionary(numericIOS) isEqualToString:@"18.6.0"], @"numeric ios field extracts system version");
+
+    NSDictionary *numericLabel = @{
             @"id": @"numeric-1",
             @"params": @[ @{ @"key": @"系统版本", @"value": @"18.6.2" } ]
         };

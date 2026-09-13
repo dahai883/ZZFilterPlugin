@@ -33,6 +33,16 @@ static NSString *ZZNormalizeVersion(NSString *value) {
     return [parts componentsJoinedByString:@"."];
 }
 
+static NSString *ZZNormalizeVersionNumber(NSNumber *number) {
+    if (![number isKindOfClass:NSNumber.class]) return @"";
+    double value = number.doubleValue;
+    if (!(value >= 0.0 && value <= 999.999)) return @"";
+    NSString *text = [NSString stringWithFormat:@"%.3f", value];
+    while ([text containsString:@"."] && [text hasSuffix:@"0"]) text = [text substringToIndex:text.length - 1];
+    if ([text hasSuffix:@"."]) text = [text substringToIndex:text.length - 1];
+    return ZZNormalizeVersion(text);
+}
+
 static BOOL ZZLooksLikeSystemVersionLabel(NSString *key) {
     if (![key isKindOfClass:NSString.class]) return NO;
     NSString *k = key.lowercaseString;
@@ -129,6 +139,14 @@ static NSString *ZZFindVersionDeep(id obj, NSUInteger depth) {
             if (v.length) return v;
             v = ZZExtractVersionFromText(value);
             if (v.length) return v;
+        } else if ([value isKindOfClass:NSNumber.class]) {
+            // Some detail payloads serialize the `ios`/`systemVersion` value
+            // as a JSON number (for example 18.6). The reference parser
+            // normalizes the value via -description, so preserve that behavior
+            // for explicitly system-version keys without accepting generic
+            // numeric fields such as price or year.
+            NSString *v = ZZNormalizeVersionNumber((NSNumber *)value);
+            if (v.length) return v;
         } else if ([value isKindOfClass:NSDictionary.class] || [value isKindOfClass:NSArray.class]) {
             NSString *v = ZZFindVersionDeep(value, depth + 1);
             if (v.length) return v;
@@ -144,7 +162,7 @@ static NSString *ZZFindVersionDeep(id obj, NSUInteger depth) {
             v = ZZExtractVersionFromText(value);
             if (v.length) return v;
         } else if ([value isKindOfClass:NSNumber.class]) {
-            NSString *v = ZZNormalizeVersion([value stringValue]);
+            NSString *v = ZZNormalizeVersionNumber((NSNumber *)value);
             if (v.length) return v;
         } else if ([value isKindOfClass:NSDictionary.class] || [value isKindOfClass:NSArray.class]) {
             NSString *v = ZZFindVersionDeep(value, depth + 1);

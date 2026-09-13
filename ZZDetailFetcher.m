@@ -20,12 +20,16 @@
 - (instancetype)init {
     self = [super init];
     if (self) {
-        NSURLSessionConfiguration *cfg = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+        NSURLSessionConfiguration *cfg = [NSURLSessionConfiguration defaultSessionConfiguration];
         cfg.protocolClasses = @[];
         cfg.HTTPCookieStorage = NSHTTPCookieStorage.sharedHTTPCookieStorage;
         cfg.HTTPShouldSetCookies = YES;
         cfg.timeoutIntervalForRequest = 3.5;
-        cfg.timeoutIntervalForResource = 5.0;
+        cfg.timeoutIntervalForResource = 8.0;
+        cfg.waitsForConnectivity = NO;
+        cfg.allowsCellularAccess = YES;
+        cfg.allowsExpensiveNetworkAccess = YES;
+        cfg.allowsConstrainedNetworkAccess = YES;
         _session = [NSURLSession sessionWithConfiguration:cfg];
         ZZRegisterCookieStorage(cfg.HTTPCookieStorage);
     }
@@ -88,10 +92,23 @@ static void ZZAppendQueryItemsFromURL(NSMutableArray<NSURLQueryItem *> *items, N
     NSMutableSet<NSString *> *seenNames = [NSMutableSet set];
     ZZAppendQueryItemsFromURL(items, targetURL, seenNames);
     ZZAppendQueryItemsFromURL(items, jumpURL, seenNames);
-    // Preserve the entire source request query context. The endpoint can use
-    // non-identifier parameters such as platform/source/token/quickStart that
-    // are not present on the list item itself.
-    ZZAppendQueryItemsFromURL(items, sourceRequest.URL, seenNames);
+    // Do not blindly forward the whole list/search query. Those queries can
+    // contain pagination, sort and filter parameters that are valid for the
+    // listing endpoint but can make the detail request invalid. Keep only the
+    // small set of context parameters used by the detail endpoint.
+    NSArray<NSString *> *contextNames = @[
+        @"uid", @"previewToken", @"platform", @"requestType", @"packageId",
+        @"ip", @"token", @"orderId", @"doubleTrackFineness", @"source",
+        @"storeQrCode", @"searchFrom", @"quickStart", @"infoId", @"strInfoId"
+    ];
+    for (NSString *name in contextNames) {
+        NSString *value = ZZQueryValue(jumpURL, @[name]);
+        if (!value.length) value = ZZQueryValue(sourceRequest.URL, @[name]);
+        if (value.length && ![seenNames containsObject:name.lowercaseString]) {
+            [seenNames addObject:name.lowercaseString];
+            [items addObject:[NSURLQueryItem queryItemWithName:name value:value]];
+        }
+    }
 
     // Ensure the identifiers the reference explicitly propagates exist.
     NSArray<NSArray<NSString *> *> *pairs = @[
@@ -149,7 +166,8 @@ static void ZZAppendQueryItemsFromURL(NSMutableArray<NSURLQueryItem *> *items, N
         if (cookie.length) [request setValue:cookie forHTTPHeaderField:@"Cookie"];
     }
     if (![request valueForHTTPHeaderField:@"Accept"]) [request setValue:@"application/json, text/plain, */*" forHTTPHeaderField:@"Accept"];
-    if (![request valueForHTTPHeaderField:@"Referer"] && sourceRequest.URL.absoluteString.length) [request setValue:sourceRequest.URL.absoluteString forHTTPHeaderField:@"Referer"];
+    // Do not synthesize a Referer from the list URL. If the host app supplied
+    // one, it was already copied above; otherwise leave it absent.
     return request;
 }
 
