@@ -19,6 +19,11 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     NSLog(@"[ZZOverlay][ERROR] " fmt, ##__VA_ARGS__); \
 } while (0)
 
+@interface ZZVersionResultsController : UITableViewController
+@property(nonatomic, copy) NSArray<NSDictionary *> *entries;
+@property(nonatomic, weak) UIViewController *presentingVC;
+@end
+
 @interface ZZOverlayController ()
 @property(nonatomic, strong) UIButton *button;
 @property(nonatomic, weak) UIWindow *hostWindow;
@@ -503,11 +508,6 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
 }
 @end
 
-@interface ZZVersionResultsController : UITableViewController
-@property(nonatomic, copy) NSArray<NSDictionary *> *entries;
-@property(nonatomic, weak) UIViewController *presentingVC;
-@end
-
 @implementation ZZVersionResultsController
 
 - (void)viewDidLoad {
@@ -518,29 +518,44 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     self.tableView.rowHeight = UITableViewAutomaticDimension;
     self.tableView.estimatedRowHeight = 112.0;
     self.tableView.allowsSelection = NO;
-    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemClose target:self action:@selector(close)] ;
+    self.tableView.contentInset = UIEdgeInsetsMake(4, 0, 16, 0);
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemClose target:self action:@selector(close)];
+    if (self.entries.count == 0) {
+        UILabel *empty = [[UILabel alloc] initWithFrame:CGRectZero];
+        empty.text = @"没有已确认属于当前系统版本范围的商品\n请返回列表并等待详情缓存后再打开本页";
+        empty.textAlignment = NSTextAlignmentCenter;
+        empty.numberOfLines = 0;
+        empty.textColor = UIColor.secondaryLabelColor;
+        [empty sizeToFit];
+        self.tableView.backgroundView = empty;
+    }
 }
 
 - (void)close {
     [self dismissViewControllerAnimated:YES completion:nil];
 }
 
+static NSString *ZZCleanDisplayTitle(NSString *title) {
+    if (![title isKindOfClass:NSString.class] || !title.length) return @"商品";
+
+    // Display-only cleanup: remove material/network labels requested by the user.
+    // The underlying product dictionary and navigation URL are left untouched.
+    NSString *clean = [title stringByReplacingOccurrencesOfString:@"钛金属" withString:@""];
+    clean = [clean stringByReplacingOccurrencesOfString:@"全网通" withString:@""];
+
+    // Tidy whitespace/punctuation left behind by the removal.
+    clean = [clean stringByReplacingOccurrencesOfString:@"  " withString:@" "];
+    clean = [clean stringByReplacingOccurrencesOfString:@" ｜  " withString:@" ｜ "];
+    clean = [clean stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    return clean.length ? clean : @"商品";
+}
+
 static NSString *ZZEntryTitle(NSDictionary *d) {
-    NSString *title = @"商品";
     for (NSString *key in @[@"title", @"name", @"itemTitle", @"goodsName", @"productName"]) {
         id v = d[key];
-        if ([v isKindOfClass:NSString.class] && [(NSString *)v length]) {
-            title = [v stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-            break;
-        }
+        if ([v isKindOfClass:NSString.class] && [(NSString *)v length]) return ZZCleanDisplayTitle(v);
     }
-    NSString *version = ZZProductVersionFromDictionary(d);
-    if (version.length) {
-        // Make the system version part of the product name itself so the user
-        // can distinguish results immediately, matching the requested UI.
-        return [NSString stringWithFormat:@"%@ · iOS %@", title, version];
-    }
-    return title;
+    return @"商品";
 }
 
 static NSString *ZZEntryPrice(NSDictionary *d) {
@@ -566,13 +581,22 @@ static NSString *ZZEntryPrice(NSDictionary *d) {
     NSString *price = ZZEntryPrice(d);
     NSString *urlString = [ZZProductVisibility.shared cachedURLForProductID:pid];
 
-    NSMutableString *detail = [NSMutableString stringWithFormat:@"¥%@", price];
-    if (!version.length) [detail appendString:@"  |  系统版本未知"];
-    if (pid.length) [detail appendFormat:@"\nID: %@", pid];
-    if (urlString.length) [detail appendString:@"\n链接：已获取"];
-    else [detail appendString:@"\n链接：未获取"];
+    // Put the system version directly in the product name so the user can
+    // compare versions without opening each item.
+    NSString *displayTitle = title;
+    if (version.length) {
+        NSString *marker = [NSString stringWithFormat:@"iOS %@", version];
+        if (![title localizedCaseInsensitiveContainsString:marker]) {
+            displayTitle = [NSString stringWithFormat:@"%@ ｜ %@", title, marker];
+        }
+    }
 
-    cell.textLabel.text = [NSString stringWithFormat:@"%lu. %@", (unsigned long)(indexPath.row + 1), title];
+    NSMutableString *detail = [NSMutableString stringWithFormat:@"¥%@", price];
+    if (pid.length) [detail appendFormat:@"  |  ID %@", pid];
+    if (urlString.length) [detail appendString:@"\n商品链接：可打开 / 可复制"];
+    else [detail appendString:@"\n商品链接：当前未从列表响应获取"];
+
+    cell.textLabel.text = [NSString stringWithFormat:@"%lu. %@", (unsigned long)(indexPath.row + 1), displayTitle];
     cell.detailTextLabel.text = detail;
     cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
     cell.detailTextLabel.numberOfLines = 0;

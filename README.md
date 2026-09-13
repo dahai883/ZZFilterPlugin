@@ -1,4 +1,4 @@
-# ZZOverlayController-Debug (reference-informed)
+# ZZFilterPlugin v23
 
 This package is an independent overlay implementation for an authorized host app.
 
@@ -59,11 +59,11 @@ The implementation is an independent reimplementation and intentionally does not
 This build adds an independent runtime adapter for known listing/model entry points when those classes and selectors are present at runtime. It filters model arrays before the host renders them and logs the selector, input count, output count, and hidden count. It does not copy implementation code from the reference binary.
 
 
-## V14 稳定性与系统版本筛选
+## V23 稳定性与系统版本筛选
 
 - 根据 V11/V12/V13 的崩溃、CPU resource 日志，彻底关闭全量 Objective-C runtime 扫描和 message-forwarding Hook；避免再次出现 `ZZCandidateScore` / runtime discovery 占用主线程导致 watchdog/resource 超限。
 - 仅对转转搜索/商品详情相关 JSON 请求进行处理，不扫描 7 万+ Objective-C 类。
-- 搜索列表商品通常不直接带“系统版本”，V14 会从列表提取商品 ID，并以低并发、短超时方式预取商品详情；从详情中的系统版本建立商品 ID→iOS 版本缓存。
+- 搜索列表商品通常不直接带“系统版本”，V23 会从列表提取商品 ID，并以低并发、短超时方式预取商品详情；从详情中的系统版本建立商品 ID→iOS 版本缓存。
 - 已有缓存会直接用于列表响应过滤；详情服务较慢时最多等待约 1.2 秒，超时则原样放行，缓存供下一次刷新使用。
 - 过滤范围只针对 iOS/系统版本，例如 `iOS 26.5 ～ iOS 26.6.1`。
 - 保留“查看系统版本结果”诊断界面，方便确认哪些商品已经拿到版本信息。

@@ -150,7 +150,11 @@ static NSComparisonResult ZZCompareVersions(NSString *a, NSString *b) {
     if (!self.enabled || ![product isKindOfClass:NSDictionary.class]) return YES;
     if (!self.minimumVersion.length && !self.maximumVersion.length) return YES;
     NSString *version = ZZFindVersionDeep(product, 0);
-    if (!version.length) return YES;
+    // When a version range is explicitly set, unknown-version items cannot be
+    // considered a valid match. This prevents the result sheet from showing
+    // products outside the requested range merely because their detail has not
+    // been resolved yet. Without a range, unknown versions remain visible.
+    if (!version.length) return (!self.minimumVersion.length && !self.maximumVersion.length);
     if (self.minimumVersion.length && ZZCompareVersions(version, self.minimumVersion) == NSOrderedAscending) return NO;
     if (self.maximumVersion.length && ZZCompareVersions(version, self.maximumVersion) == NSOrderedDescending) return NO;
     return YES;
