@@ -80,6 +80,13 @@
     return result.copy;
 }
 
+- (NSString *)cachedVersionForProductID:(NSString *)productID {
+    if (!productID.length) return @"";
+    NSDictionary *entry = nil;
+    @synchronized (self) { entry = _entriesByID[productID]; }
+    return ZZProductVersionFromDictionary(entry);
+}
+
 - (NSString *)cachedURLForProductID:(NSString *)productID {
     if (!productID.length) return @"";
     NSDictionary *entry = nil;

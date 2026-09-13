@@ -10,5 +10,6 @@ FOUNDATION_EXPORT NSUInteger ZZRuntimeFilteringHookCount(void);
 FOUNDATION_EXPORT NSUInteger ZZRuntimeFilteringCalls(void);
 FOUNDATION_EXPORT NSUInteger ZZRuntimeCandidateCount(void);
 FOUNDATION_EXPORT NSString *ZZRuntimeDiagnosticSummary(void);
+FOUNDATION_EXPORT void ZZRequestAdditionalListingPages(id controller, NSUInteger count);
 
 NS_ASSUME_NONNULL_END

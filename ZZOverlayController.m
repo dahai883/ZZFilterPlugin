@@ -22,6 +22,7 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
 @interface ZZVersionResultsController : UITableViewController
 @property(nonatomic, copy) NSArray<NSDictionary *> *entries;
 @property(nonatomic, weak) UIViewController *presentingVC;
+@property(nonatomic) BOOL requestedMore;
 @end
 
 @interface ZZOverlayController ()
@@ -519,6 +520,7 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     self.tableView.allowsSelection = NO;
     self.tableView.contentInset = UIEdgeInsetsMake(4, 0, 16, 0);
     self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemClose target:self action:@selector(close)];
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"加载更多" style:UIBarButtonItemStylePlain target:self action:@selector(loadMore)];
     if (self.entries.count == 0) {
         UILabel *empty = [[UILabel alloc] initWithFrame:CGRectZero];
         empty.text = @"没有已确认属于当前系统版本范围的商品\n请返回列表并等待详情缓存后再打开本页";
@@ -532,6 +534,39 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
 
 - (void)close {
     [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    if (!self.requestedMore && self.entries.count <= 20) {
+        self.requestedMore = YES;
+        [self loadMore];
+    }
+}
+
+- (void)loadMore {
+    UIViewController *vc = self.presentingVC;
+    if (!vc) return;
+    self.navigationItem.rightBarButtonItem.enabled = NO;
+    self.navigationItem.rightBarButtonItem.title = @"加载中…";
+    ZZRequestAdditionalListingPages(vc, 3);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSArray *updated = [ZZProductVisibility.shared cachedEntriesMatchingCurrentVersionRange];
+        self.entries = updated ?: @[];
+        self.title = [NSString stringWithFormat:@"系统版本筛选 · %lu 条", (unsigned long)self.entries.count];
+        self.navigationItem.rightBarButtonItem.enabled = YES;
+        self.navigationItem.rightBarButtonItem.title = @"加载更多";
+        self.tableView.backgroundView = nil;
+        if (self.entries.count == 0) {
+            UILabel *empty = [[UILabel alloc] initWithFrame:CGRectZero];
+            empty.text = @"没有已确认属于当前系统版本范围的商品\n请返回列表并等待详情缓存后再打开本页";
+            empty.textAlignment = NSTextAlignmentCenter;
+            empty.numberOfLines = 0;
+            empty.textColor = UIColor.secondaryLabelColor;
+            self.tableView.backgroundView = empty;
+        }
+        [self.tableView reloadData];
+    });
 }
 
 static NSString *ZZCleanDisplayTitle(NSString *title) {

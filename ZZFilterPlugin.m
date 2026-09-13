@@ -42,10 +42,8 @@ static void ZZFilterPluginLoaded(void) {
     ZZFilterDebugWrite(@"[ZZPlugin] constructor called");
     ZZInstallNetworkInterception();
     ZZInstallUIFiltering();
-    // V14 deliberately does not enumerate the host app's entire Objective-C
-    // runtime. The previous discovery approach was the source of unnecessary
-    // CPU/memory pressure. Version filtering is driven by targeted API
-    // responses and the cached product-detail data instead.
+    // v25 avoids global runtime enumeration. It uses targeted listing entry points
+    // observed in the supplied reference binary, plus API/detail response data.
     // Keep constructor work minimal. UI setup is deferred to the main queue;
     // ZZOverlayBootstrap +load provides a second initialization path.
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -57,6 +55,13 @@ static void ZZFilterPluginLoaded(void) {
 /// Reference-architecture entry points for independent model/list filtering.
 /// These are intentionally activation-free.
 void ZZInstallUIFiltering(void) {
-    ZZFilterDebugWrite(@"[ZZFilterUI] v14 version-filter layer initialized; runtime enumeration disabled");
+    ZZFilterDebugWrite(@"[ZZFilterUI] v25 targeted listing filter initialized");
+    NSArray<NSNumber *> *delays = @[@0.0, @1.0, @2.0, @4.0, @6.0, @10.0, @15.0, @25.0];
+    for (NSNumber *delayValue in delays) {
+        NSTimeInterval delay = delayValue.doubleValue;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            ZZInstallRuntimeFiltering();
+        });
+    }
 }
 

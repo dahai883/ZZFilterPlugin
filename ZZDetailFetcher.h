@@ -14,6 +14,13 @@ typedef void (^ZZDetailCompletion)(NSArray<NSDictionary *> *entries, NSError * _
                          baseURL:(NSURL *)baseURL
                        headers:(NSDictionary<NSString *, NSString *> * _Nullable)headers
                     completion:(ZZDetailCompletion)completion;
+
+- (void)fetchDetailsForProductIDs:(NSArray<NSString *> *)productIDs
+            jumpURLsByProductID:(NSDictionary<NSString *, NSURL *> * _Nullable)jumpURLsByProductID
+                  sourceRequest:(NSURLRequest * _Nullable)sourceRequest
+                        baseURL:(NSURL *)baseURL
+                         headers:(NSDictionary<NSString *, NSString *> * _Nullable)headers
+                      completion:(ZZDetailCompletion)completion;
 @end
 
 NS_ASSUME_NONNULL_END
