@@ -19,6 +19,11 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     NSLog(@"[ZZOverlay][ERROR] " fmt, ##__VA_ARGS__); \
 } while (0)
 
+@interface ZZVersionResultsController : UITableViewController
+@property(nonatomic, copy) NSArray<NSDictionary *> *entries;
+@property(nonatomic, weak) UIViewController *presentingVC;
+@end
+
 @interface ZZOverlayController ()
 @property(nonatomic, strong) UIButton *button;
 @property(nonatomic, weak) UIWindow *hostWindow;
@@ -501,11 +506,6 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     self.textLabel.numberOfLines = 0;
     self.detailTextLabel.numberOfLines = 0;
 }
-@end
-
-@interface ZZVersionResultsController : UITableViewController
-@property(nonatomic, copy) NSArray<NSDictionary *> *entries;
-@property(nonatomic, weak) UIViewController *presentingVC;
 @end
 
 @implementation ZZVersionResultsController
