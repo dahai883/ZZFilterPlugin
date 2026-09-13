@@ -1,27 +1,25 @@
-# ZZFilterPlugin v31
+# ZZFilterPlugin v32
 
-独立实现的 iOS 商品列表“系统版本”筛选测试插件。v29 针对 **“详情响应已经有 36 条，但详情命中仍为 0”** 做了第二轮深入修复。
+独立实现的 iOS 商品列表“系统版本”筛选测试插件。
 
-## v29 核心修复
+## v32 本轮修复
 
-- 详情响应增加严格的 HTTP 2xx 校验，并在状态面板显示 `详情响应（2xx / 失败）`，便于立即判断问题在请求还是解析。
-- 新增独立的 `entryFromData:response:error:` 解析边界：JSON/text 两条路径统一处理。
-- 支持多层 JSON 字符串包装、百分号编码后的 JSON，以及字符串形式的 `respData / report / params`。
-- 对当前 JSON 对象做一次有限范围的序列化文本扫描，可识别 `"系统版本":"18.6.2"`、`{"key":"系统版本","value":"18.6.2"}` 等实际响应变体。
-- `itemId2AttrInfo` 不再只接受字典值，也递归处理数组/字符串。
-- 去掉详情请求头的窄白名单，改为参考实现思路的“复制源请求头 + 明确排除传输层头”，保留应用侧上下文头。
-- 额外保留源列表请求的全部 query context，再补齐 `productId / infoId / strInfoId / uid / requestType / packageId / orderId / storeQrCode / searchFrom`。
-- 保留 `jumpURL → moreInfo` 路径选择、Cookie 同步以及并发上限，避免再次出现高 CPU / 发热 / Watchdog。
+- 根据 v30/v31 实测结果，确认详情请求能够收到 HTTP 响应，但全部不是 2xx；因此本轮重点修正“详情请求形状”，不再继续盲目增加解析规则。
+- 详情请求的 query 参数改为参考路径的最小集合：`productId` + `uid / previewToken / infoId / platform / requestType / packageId / t / ip / token / orderId / doubleTrackFineness / source / storeQrCode / searchFrom / quickStart`。
+- 不再把搜索列表的全部 query 参数复制到详情请求，避免分页、排序、筛选等列表参数污染详情接口。
+- 详情请求的源请求头复制边界进一步收紧，排除 Cookie、Host、Content-Type、Origin、Referer 以及传输/请求上下文相关头；Cookie 和 Referer 按当前详情 URL/源请求重新设置。
+- 保留 HTTP 状态统计，并新增“最后详情 HTTP 状态码”，用于区分 400/401/403/404/5xx 等服务端返回。
+- 保留 v29-v31 已有的多层 JSON、文本、`itemId2AttrInfo`、系统版本字段解析能力。
+- 继续限制详情并发，避免出现高 CPU、发热和 Watchdog 问题。
 
 ## 测试重点
 
-注入 v29 后先看状态：
+注入 v32 后，先查看状态面板中的：
 
-`详情响应` 应与 `详情预取` 接近；`2xx` 表示服务器确实返回成功响应。若 2xx 已增加而 `详情命中` 仍为 0，下一步就能直接定位到响应内容本身，而不是继续盲猜网络请求。
+`详情预取 / 详情响应 / 2xx / 失败 / 最后HTTP状态 / 详情命中`
+
+如果出现 `2xx > 0`，再重点观察 `详情命中` 是否增加；如果仍然 `2xx = 0`，最后 HTTP 状态码可以直接帮助判断服务端拒绝类型。
 
 ## 编译
 
 GitHub Actions 手动运行 `.github/workflows/build.yml`，目标 iOS 16+，arm64/arm64e。
-
-
-- v31：针对 v30 中“详情预取有请求、但 2xx=0 且失败=全部”的现象，收紧详情请求 query 上下文，改用 default session，并放宽蜂窝/受限网络条件；同时保留多层 JSON 与数字类型系统版本解析。

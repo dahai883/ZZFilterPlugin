@@ -42,7 +42,7 @@ static void ZZFilterPluginLoaded(void) {
     ZZFilterDebugWrite(@"[ZZPlugin] constructor called");
     ZZInstallNetworkInterception();
     ZZInstallUIFiltering();
-    // v27 avoids global runtime enumeration. It uses targeted listing entry points
+    // v32 avoids global runtime enumeration. It uses targeted listing entry points
     // observed in the supplied reference binary, plus API/detail response data.
     // Keep constructor work minimal. UI setup is deferred to the main queue;
     // ZZOverlayBootstrap +load provides a second initialization path.
@@ -55,7 +55,7 @@ static void ZZFilterPluginLoaded(void) {
 /// Reference-architecture entry points for independent model/list filtering.
 /// These are intentionally activation-free.
 void ZZInstallUIFiltering(void) {
-    ZZFilterDebugWrite(@"[ZZFilterUI] v27 targeted listing filter initialized");
+    ZZFilterDebugWrite(@"[ZZFilterUI] v32 targeted listing filter initialized");
     NSArray<NSNumber *> *delays = @[@0.0, @1.0, @2.0, @4.0, @6.0, @10.0, @15.0, @25.0];
     for (NSNumber *delayValue in delays) {
         NSTimeInterval delay = delayValue.doubleValue;

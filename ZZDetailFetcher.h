@@ -7,6 +7,7 @@ typedef void (^ZZDetailCompletion)(NSArray<NSDictionary *> *entries, NSError * _
 FOUNDATION_EXPORT NSUInteger ZZDetailHTTPResponses(void);
 FOUNDATION_EXPORT NSUInteger ZZDetailHTTP2xxResponses(void);
 FOUNDATION_EXPORT NSUInteger ZZDetailHTTPFailureResponses(void);
+FOUNDATION_EXPORT NSInteger ZZDetailLastHTTPStatus(void);
 
 @interface ZZDetailFetcher : NSObject
 + (instancetype)shared;

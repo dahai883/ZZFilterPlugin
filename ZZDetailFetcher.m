@@ -20,16 +20,12 @@
 - (instancetype)init {
     self = [super init];
     if (self) {
-        NSURLSessionConfiguration *cfg = [NSURLSessionConfiguration defaultSessionConfiguration];
+        NSURLSessionConfiguration *cfg = [NSURLSessionConfiguration ephemeralSessionConfiguration];
         cfg.protocolClasses = @[];
         cfg.HTTPCookieStorage = NSHTTPCookieStorage.sharedHTTPCookieStorage;
         cfg.HTTPShouldSetCookies = YES;
         cfg.timeoutIntervalForRequest = 3.5;
-        cfg.timeoutIntervalForResource = 8.0;
-        cfg.waitsForConnectivity = NO;
-        cfg.allowsCellularAccess = YES;
-        cfg.allowsExpensiveNetworkAccess = YES;
-        cfg.allowsConstrainedNetworkAccess = YES;
+        cfg.timeoutIntervalForResource = 5.0;
         _session = [NSURLSession sessionWithConfiguration:cfg];
         ZZRegisterCookieStorage(cfg.HTTPCookieStorage);
     }
@@ -39,10 +35,12 @@
 static NSUInteger ZZDetailHTTPResponseCount;
 static NSUInteger ZZDetailHTTP2xxCount;
 static NSUInteger ZZDetailHTTPFailureCount;
+static NSInteger ZZDetailLastStatusCode;
 
 NSUInteger ZZDetailHTTPResponses(void) { @synchronized (ZZDetailFetcher.class) { return ZZDetailHTTPResponseCount; } }
 NSUInteger ZZDetailHTTP2xxResponses(void) { @synchronized (ZZDetailFetcher.class) { return ZZDetailHTTP2xxCount; } }
 NSUInteger ZZDetailHTTPFailureResponses(void) { @synchronized (ZZDetailFetcher.class) { return ZZDetailHTTPFailureCount; } }
+NSInteger ZZDetailLastHTTPStatus(void) { @synchronized (ZZDetailFetcher.class) { return ZZDetailLastStatusCode; } }
 
 static NSString *ZZQueryValue(NSURL *url, NSArray<NSString *> *names) {
     if (!url) return @"";
@@ -54,13 +52,30 @@ static NSString *ZZQueryValue(NSURL *url, NSArray<NSString *> *names) {
     return @"";
 }
 
-static void ZZAppendQueryItemsFromURL(NSMutableArray<NSURLQueryItem *> *items, NSURL *url, NSMutableSet<NSString *> *names) {
-    if (!url) return;
-    for (NSURLQueryItem *item in [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO].queryItems ?: @[]) {
+static NSArray<NSString *> *ZZReferenceDetailQueryNames(void) {
+    // Keep the detail request's query shape aligned with the app's normal
+    // detail-request context: productId plus the small set of source-context
+    // fields observed on the reference path. Do not forward list-only query
+    // parameters wholesale.
+    return @[
+        @"uid", @"previewToken", @"infoId", @"platform", @"requestType",
+        @"packageId", @"t", @"ip", @"token", @"orderId",
+        @"doubleTrackFineness", @"source", @"storeQrCode", @"searchFrom",
+        @"quickStart"
+    ];
+}
+
+static void ZZAppendReferenceSourceQueryItems(NSMutableArray<NSURLQueryItem *> *items,
+                                              NSURLRequest *sourceRequest) {
+    if (!sourceRequest.URL) return;
+    NSSet<NSString *> *allowed = [NSSet setWithArray:ZZReferenceDetailQueryNames()];
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    for (NSURLQueryItem *item in [NSURLComponents componentsWithURL:sourceRequest.URL resolvingAgainstBaseURL:NO].queryItems ?: @[]) {
         if (!item.name.length || !item.value.length) continue;
         NSString *lower = item.name.lowercaseString;
-        if ([names containsObject:lower]) continue;
-        [names addObject:lower];
+        if ([lower isEqualToString:@"productid"] || ![allowed containsObject:item.name]) continue;
+        if ([seen containsObject:lower]) continue;
+        [seen addObject:lower];
         [items addObject:[NSURLQueryItem queryItemWithName:item.name value:item.value]];
     }
 }
@@ -70,17 +85,13 @@ static void ZZAppendQueryItemsFromURL(NSMutableArray<NSURLQueryItem *> *items, N
                               sourceRequest:(NSURLRequest *)sourceRequest {
     if (!pid.length) return nil;
 
-    // The reference starts from the real jump URL when available, then
-    // augments it with source query items. For ordinary item/redirect URLs we
-    // still call the canonical moreInfo endpoint while preserving those
-    // identifiers instead of discarding the jumpURL query.
     NSURL *targetURL = nil;
     NSString *jumpScheme = jumpURL.scheme.lowercaseString ?: @"";
     NSString *jumpHost = jumpURL.host.lowercaseString ?: @"";
     NSString *jumpPath = jumpURL.path.lowercaseString ?: @"";
     BOOL jumpIsHTTP = [jumpScheme isEqualToString:@"http"] || [jumpScheme isEqualToString:@"https"];
     BOOL sameHost = [jumpHost hasSuffix:@"zhuanzhuan.com"] || [jumpHost hasSuffix:@"zhuanzhuan.com.cn"];
-    BOOL looksLikeDetail = [jumpPath containsString:@"moreinfo"] || [jumpPath containsString:@"waresshow"];
+    BOOL looksLikeDetail = [jumpPath containsString:@"/waresshow/moreinfo"] || [jumpPath containsString:@"moreinfo"];
     if (jumpURL && jumpIsHTTP && sameHost && looksLikeDetail) targetURL = jumpURL;
 
     NSURLComponents *components = targetURL
@@ -88,86 +99,54 @@ static void ZZAppendQueryItemsFromURL(NSMutableArray<NSURLQueryItem *> *items, N
         : [NSURLComponents componentsWithString:@"https://app.zhuanzhuan.com/zzopen/waresshow/moreInfo"];
     if (!components) return nil;
 
-    NSMutableArray<NSURLQueryItem *> *items = [NSMutableArray array];
-    NSMutableSet<NSString *> *seenNames = [NSMutableSet set];
-    ZZAppendQueryItemsFromURL(items, targetURL, seenNames);
-    ZZAppendQueryItemsFromURL(items, jumpURL, seenNames);
-    // Do not blindly forward the whole list/search query. Those queries can
-    // contain pagination, sort and filter parameters that are valid for the
-    // listing endpoint but can make the detail request invalid. Keep only the
-    // small set of context parameters used by the detail endpoint.
-    NSArray<NSString *> *contextNames = @[
-        @"uid", @"previewToken", @"platform", @"requestType", @"packageId",
-        @"ip", @"token", @"orderId", @"doubleTrackFineness", @"source",
-        @"storeQrCode", @"searchFrom", @"quickStart", @"infoId", @"strInfoId"
-    ];
-    for (NSString *name in contextNames) {
-        NSString *value = ZZQueryValue(jumpURL, @[name]);
-        if (!value.length) value = ZZQueryValue(sourceRequest.URL, @[name]);
-        if (value.length && ![seenNames containsObject:name.lowercaseString]) {
-            [seenNames addObject:name.lowercaseString];
-            [items addObject:[NSURLQueryItem queryItemWithName:name value:value]];
-        }
-    }
-
-    // Ensure the identifiers the reference explicitly propagates exist.
-    NSArray<NSArray<NSString *> *> *pairs = @[
-        @[@"productId", @"productId", @"goodsId", @"itemId", @"id"],
-        @[@"infoId", @"infoId", @"strInfoId", @"infoid"],
-        @[@"strInfoId", @"strInfoId", @"infoId", @"infoid"],
-        @[@"uid", @"uid"],
-        @[@"requestType", @"requestType"],
-        @[@"packageId", @"packageId"],
-        @[@"orderId", @"orderId"],
-        @[@"storeQrCode", @"storeQrCode"],
-        @[@"searchFrom", @"searchFrom"]
-    ];
-    for (NSArray *pair in pairs) {
-        NSString *outName = pair.firstObject;
-        if ([seenNames containsObject:outName.lowercaseString]) continue;
-        NSArray *candidates = [pair subarrayWithRange:NSMakeRange(1, pair.count - 1)];
-        NSString *value = ZZQueryValue(jumpURL, candidates);
-        if (!value.length) value = ZZQueryValue(sourceRequest.URL, candidates);
-        if (!value.length && [outName isEqualToString:@"productId"]) value = pid;
-        if (value.length) {
-            [seenNames addObject:outName.lowercaseString];
-            [items addObject:[NSURLQueryItem queryItemWithName:outName value:value]];
-        }
-    }
+    // The reference constructs a fresh query list: productId first, then only
+    // selected source-request context fields. This is intentionally stricter
+    // than copying the entire listing URL query.
+    NSMutableArray<NSURLQueryItem *> *items = [NSMutableArray arrayWithObject:
+        [NSURLQueryItem queryItemWithName:@"productId" value:pid]];
+    ZZAppendReferenceSourceQueryItems(items, sourceRequest);
     components.queryItems = items;
-    targetURL = components.URL;
-    if (!targetURL) return nil;
+    NSURL *finalURL = components.URL;
+    if (!finalURL) return nil;
 
-    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:targetURL];
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:finalURL];
     request.HTTPMethod = @"GET";
-    request.timeoutInterval = 3.5;
+    request.timeoutInterval = 5.0;
 
     NSDictionary *sourceHeaders = sourceRequest.allHTTPHeaderFields ?: @{};
-    // The reference uses a denylist rather than a narrow allowlist, which is
-    // important for Zhuanzhuan's request-context headers that can vary by app
-    // release. Never forward transport-managed or cookie headers verbatim.
+    // Match the reference header-copy boundary: transport headers and the
+    // request-signature/content headers are not blindly replayed. Cookie and
+    // Accept are supplied below from the current app cookie store.
     NSSet *deny = [NSSet setWithArray:@[
-        @"host", @"content-length", @"connection", @"cookie",
-        @"accept-encoding", @"proxy-connection", @"proxy-authenticate",
-        @"proxy-authorization", @"te", @"trailer", @"transfer-encoding",
-        @"upgrade"
+        @"host", @"content-length", @"content-type", @"origin", @"referer",
+        @"zzreqsign", @"zzreqt", @"zzreqallparam", @"zzreqversion",
+        @"cookie", @"accept-encoding", @"connection", @"proxy-connection",
+        @"proxy-authenticate", @"proxy-authorization", @"te", @"trailer",
+        @"transfer-encoding", @"upgrade"
     ]];
     [sourceHeaders enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSString *value, BOOL *stop) {
-        NSString *lower = key.lowercaseString;
-        if (key.length && value.length && ![deny containsObject:lower]) {
+        if (key.length && value.length && ![deny containsObject:key.lowercaseString]) {
             [request setValue:value forHTTPHeaderField:key];
         }
         (void)stop;
     }];
-    NSArray<NSHTTPCookie *> *cookies = ZZCookiesForURL(targetURL);
+
+    NSArray<NSHTTPCookie *> *cookies = ZZCookiesForURL(finalURL);
     if (cookies.count) {
-        NSDictionary *cookieFields = [NSHTTPCookie requestHeaderFieldsWithCookies:cookies];
-        NSString *cookie = cookieFields[@"Cookie"];
+        NSString *cookie = [NSHTTPCookie requestHeaderFieldsWithCookies:cookies][@"Cookie"];
         if (cookie.length) [request setValue:cookie forHTTPHeaderField:@"Cookie"];
     }
-    if (![request valueForHTTPHeaderField:@"Accept"]) [request setValue:@"application/json, text/plain, */*" forHTTPHeaderField:@"Accept"];
-    // Do not synthesize a Referer from the list URL. If the host app supplied
-    // one, it was already copied above; otherwise leave it absent.
+    if (![request valueForHTTPHeaderField:@"Accept"])
+        [request setValue:@"application/json, text/plain, */*" forHTTPHeaderField:@"Accept"];
+
+    // If the supplied jump URL is a normal HTTP(S) detail URL, use it as the
+    // referer; otherwise preserve an existing source-request Referer.
+    if (jumpURL && jumpIsHTTP && sameHost && looksLikeDetail) {
+        [request setValue:jumpURL.absoluteString forHTTPHeaderField:@"Referer"];
+    } else {
+        NSString *sourceReferer = [sourceRequest valueForHTTPHeaderField:@"Referer"];
+        if (sourceReferer.length) [request setValue:sourceReferer forHTTPHeaderField:@"Referer"];
+    }
     return request;
 }
 
@@ -262,6 +241,7 @@ static void ZZAppendQueryItemsFromURL(NSMutableArray<NSURLQueryItem *> *items, N
                     ZZStoreResponseCookies(http, response.URL ?: request.URL);
                     @synchronized (ZZDetailFetcher.class) {
                         ZZDetailHTTPResponseCount += 1;
+                        ZZDetailLastStatusCode = http.statusCode;
                         if (http.statusCode >= 200 && http.statusCode <= 299) ZZDetailHTTP2xxCount += 1;
                         else ZZDetailHTTPFailureCount += 1;
                     }
