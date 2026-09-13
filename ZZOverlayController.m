@@ -393,6 +393,98 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
             (unsigned long)ZZNetworkModifiedResponses()];
 }
 
+- (void)showVersionResultsFrom:(UIViewController *)vc {
+    NSArray<NSDictionary *> *entries = [ZZProductVisibility.shared cachedEntriesMatchingCurrentVersionRange];
+    ZZVersionResultsController *results = [[ZZVersionResultsController alloc] initWithStyle:UITableViewStylePlain];
+    results.entries = entries;
+    results.presentingVC = vc;
+
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:results];
+    nav.modalPresentationStyle = UIModalPresentationPageSheet;
+    if (@available(iOS 15.0, *)) {
+        UISheetPresentationController *sheet = nav.sheetPresentationController;
+        sheet.detents = @[UISheetPresentationControllerDetent.mediumDetent, UISheetPresentationControllerDetent.largeDetent];
+        sheet.prefersGrabberVisible = YES;
+        sheet.preferredCornerRadius = 18.0;
+    }
+    [vc presentViewController:nav animated:YES completion:nil];
+}
+
+- (void)presentSettingsFrom:(UIViewController *)vc {
+    ZZSettings *s = ZZSettings.shared;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"ZZFilterPlugin"
+                                                                   message:[self summary]
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.placeholder = @"最低系统版本（如 18.0.0）";
+        field.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
+        field.text = s.minimumVersion ?: @"";
+    }];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.placeholder = @"最高系统版本（如 26.6.1）";
+        field.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
+        field.text = s.maximumVersion ?: @"";
+    }];
+
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"查看系统版本结果" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+        [weakSelf showVersionResultsFrom:vc];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:s.enabled ? @"关闭过滤" : @"开启过滤"
+                                                   style:UIAlertActionStyleDefault
+                                                 handler:^(__unused UIAlertAction *action) {
+        ZZSettings *settings = ZZSettings.shared;
+        settings.enabled = !settings.enabled;
+        [settings save];
+        [weakSelf refreshButton];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"保存范围" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action;
+        NSArray<UITextField *> *fields = alert.textFields;
+        NSString *minVer = fields.count > 0 ? fields[0].text : @"";
+        NSString *maxVer = fields.count > 1 ? fields[1].text : @"";
+        ZZSettings *settings = ZZSettings.shared;
+        settings.minimumText = 0;
+        settings.maximumText = NSIntegerMax;
+        settings.minimumVersion = minVer ?: @"";
+        settings.maximumVersion = maxVer ?: @"";
+        [settings save];
+        [weakSelf refreshButton];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"恢复默认" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
+        ZZSettings *settings = ZZSettings.shared;
+        settings.enabled = YES;
+        settings.minimumText = 0;
+        settings.maximumText = NSIntegerMax;
+        settings.minimumVersion = @"";
+        settings.maximumVersion = @"";
+        [settings save];
+        [weakSelf refreshButton];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [vc presentViewController:alert animated:YES completion:^{
+        ZZOverlayLogInfo(@"settings alert presented from %@", vc);
+    }];
+}
+
+- (void)refreshButton {
+    if (!NSThread.isMainThread) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self refreshButton]; });
+        return;
+    }
+    if (!self.button) return;
+    NSUInteger hooks = ZZRuntimeFilteringHookCount();
+    NSUInteger hidden = ZZFilterModelsHiddenCount();
+    NSString *mark = hooks > 0 ? @"✓" : @"!";
+    NSString *title = [NSString stringWithFormat:@"筛选\n%@ UI:%lu\n隐:%lu", mark, (unsigned long)hooks, (unsigned long)hidden];
+    [self.button setTitle:title forState:UIControlStateNormal];
+    self.button.alpha = ZZSettings.shared.enabled ? 1.0 : 0.55;
+    ZZOverlayLogInfo(@"refreshButton enabled=%d hooks=%lu processed=%lu hidden=%lu network=%lu modified=%lu", ZZSettings.shared.enabled, (unsigned long)hooks, (unsigned long)ZZFilterModelsProcessedCount(), (unsigned long)hidden, (unsigned long)ZZNetworkInterceptedRequests(), (unsigned long)ZZNetworkModifiedResponses());
+}
+
+@end
+
 @interface ZZVersionResultCell : UITableViewCell
 @property(nonatomic, copy) void (^openHandler)(void);
 @property(nonatomic, copy) void (^copyHandler)(void);
@@ -500,7 +592,7 @@ static NSString *ZZEntryPrice(NSDictionary *d) {
 }
 
 - (void)copyResult:(UIButton *)sender {
-    if (sender.tag >= self.entries.count) return;
+    if ((NSUInteger)sender.tag >= self.entries.count) return;
     NSDictionary *d = self.entries[sender.tag];
     NSString *pid = ZZProductIDFromInfo(d);
     NSString *url = [ZZProductVisibility.shared cachedURLForProductID:pid];
@@ -512,105 +604,13 @@ static NSString *ZZEntryPrice(NSDictionary *d) {
 }
 
 - (void)openResult:(UIButton *)sender {
-    if (sender.tag >= self.entries.count) return;
+    if ((NSUInteger)sender.tag >= self.entries.count) return;
     NSDictionary *d = self.entries[sender.tag];
     NSString *pid = ZZProductIDFromInfo(d);
     NSString *urlString = [ZZProductVisibility.shared cachedURLForProductID:pid];
     NSURL *url = [NSURL URLWithString:urlString];
     if (!url) return;
     [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil];
-}
-
-@end
-
-- (void)showVersionResultsFrom:(UIViewController *)vc {
-    NSArray<NSDictionary *> *entries = [ZZProductVisibility.shared cachedEntriesMatchingCurrentVersionRange];
-    ZZVersionResultsController *results = [[ZZVersionResultsController alloc] initWithStyle:UITableViewStylePlain];
-    results.entries = entries;
-    results.presentingVC = vc;
-
-    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:results];
-    nav.modalPresentationStyle = UIModalPresentationPageSheet;
-    if (@available(iOS 15.0, *)) {
-        UISheetPresentationController *sheet = nav.sheetPresentationController;
-        sheet.detents = @[UISheetPresentationControllerDetent.mediumDetent, UISheetPresentationControllerDetent.largeDetent];
-        sheet.prefersGrabberVisible = YES;
-        sheet.preferredCornerRadius = 18.0;
-    }
-    [vc presentViewController:nav animated:YES completion:nil];
-}
-
-- (void)presentSettingsFrom:(UIViewController *)vc {
-    ZZSettings *s = ZZSettings.shared;
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"ZZFilterPlugin"
-                                                                   message:[self summary]
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
-        field.placeholder = @"最低系统版本（如 18.0.0）";
-        field.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
-        field.text = s.minimumVersion ?: @"";
-    }];
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
-        field.placeholder = @"最高系统版本（如 26.6.1）";
-        field.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
-        field.text = s.maximumVersion ?: @"";
-    }];
-
-    __weak typeof(self) weakSelf = self;
-    [alert addAction:[UIAlertAction actionWithTitle:@"查看系统版本结果" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
-        [weakSelf showVersionResultsFrom:vc];
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:s.enabled ? @"关闭过滤" : @"开启过滤"
-                                                   style:UIAlertActionStyleDefault
-                                                 handler:^(__unused UIAlertAction *action) {
-        ZZSettings *settings = ZZSettings.shared;
-        settings.enabled = !settings.enabled;
-        [settings save];
-        [weakSelf refreshButton];
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"保存范围" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        (void)action;
-        NSArray<UITextField *> *fields = alert.textFields;
-        NSString *minVer = fields.count > 0 ? fields[0].text : @"";
-        NSString *maxVer = fields.count > 1 ? fields[1].text : @"";
-        ZZSettings *settings = ZZSettings.shared;
-        settings.minimumText = 0;
-        settings.maximumText = NSIntegerMax;
-        settings.minimumVersion = minVer ?: @"";
-        settings.maximumVersion = maxVer ?: @"";
-        [settings save];
-        [weakSelf refreshButton];
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"恢复默认" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
-        ZZSettings *settings = ZZSettings.shared;
-        settings.enabled = YES;
-        settings.minimumText = 0;
-        settings.maximumText = NSIntegerMax;
-        settings.minimumVersion = @"";
-        settings.maximumVersion = @"";
-        [settings save];
-        [weakSelf refreshButton];
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [vc presentViewController:alert animated:YES completion:^{
-        ZZOverlayLogInfo(@"settings alert presented from %@", vc);
-    }];
-}
-
-- (void)refreshButton {
-    if (!NSThread.isMainThread) {
-        dispatch_async(dispatch_get_main_queue(), ^{ [self refreshButton]; });
-        return;
-    }
-    if (!self.button) return;
-    NSUInteger hooks = ZZRuntimeFilteringHookCount();
-    NSUInteger hidden = ZZFilterModelsHiddenCount();
-    NSString *mark = hooks > 0 ? @"✓" : @"!";
-    NSString *title = [NSString stringWithFormat:@"筛选\n%@ UI:%lu\n隐:%lu", mark, (unsigned long)hooks, (unsigned long)hidden];
-    [self.button setTitle:title forState:UIControlStateNormal];
-    self.button.alpha = ZZSettings.shared.enabled ? 1.0 : 0.55;
-    ZZOverlayLogInfo(@"refreshButton enabled=%d hooks=%lu processed=%lu hidden=%lu network=%lu modified=%lu", ZZSettings.shared.enabled, (unsigned long)hooks, (unsigned long)ZZFilterModelsProcessedCount(), (unsigned long)hidden, (unsigned long)ZZNetworkInterceptedRequests(), (unsigned long)ZZNetworkModifiedResponses());
 }
 
 @end
