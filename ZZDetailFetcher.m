@@ -101,7 +101,23 @@
         if (pid.length && version.length) {
             @synchronized (entries) { [entries addObject:d]; }
         }
-        for (id value in d.allValues) {
+        id attrMap = d[@"itemId2AttrInfo"];
+        if ([attrMap isKindOfClass:NSDictionary.class]) {
+            for (NSString *mappedID in (NSDictionary *)attrMap) {
+                id mapped = ((NSDictionary *)attrMap)[mappedID];
+                if (![mapped isKindOfClass:NSDictionary.class]) continue;
+                NSMutableDictionary *entry = [mapped mutableCopy];
+                if (!ZZProductIDFromInfo(entry).length && mappedID.length) entry[@"productId"] = mappedID;
+                NSString *v = ZZProductVersionFromDictionary(entry);
+                if (v.length) {
+                    @synchronized (entries) { [entries addObject:entry]; }
+                }
+                [self collectEntriesFromObject:entry into:entries];
+            }
+        }
+        for (NSString *key in d) {
+            if ([key isEqualToString:@"itemId2AttrInfo"]) continue;
+            id value = d[key];
             if ([value isKindOfClass:NSDictionary.class] || [value isKindOfClass:NSArray.class]) {
                 [self collectEntriesFromObject:value into:entries];
             }

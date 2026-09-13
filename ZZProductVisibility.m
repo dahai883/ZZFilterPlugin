@@ -30,16 +30,17 @@
         if (![entry isKindOfClass:NSDictionary.class]) continue;
         NSString *pid = i < ids.count ? ids[i] : ZZProductIDFromInfo(entry);
         if (![pid isKindOfClass:NSString.class] || !pid.length) continue;
-        @synchronized (self) { _entriesByID[pid] = entry; }
-        NSString *version = nil;
-        for (NSString *key in @[@"version", @"modelVersion", @"goodsVersion", @"waresVersion", @"iosVersion", @"systemVersion", @"ios"]) {
-            id value = entry[key];
-            if ([value isKindOfClass:NSString.class] && [(NSString *)value length]) { version = value; break; }
-            if ([value respondsToSelector:@selector(stringValue)]) {
-                NSString *s = [value stringValue];
-                if (s.length) { version = s; break; }
+        @synchronized (self) {
+            NSDictionary *old = _entriesByID[pid];
+            if ([old isKindOfClass:NSDictionary.class]) {
+                NSMutableDictionary *merged = [old mutableCopy];
+                [merged addEntriesFromDictionary:entry];
+                _entriesByID[pid] = merged.copy;
+            } else {
+                _entriesByID[pid] = entry;
             }
         }
+        NSString *version = ZZProductVersionFromDictionary(entry);
         if (version.length) [versionList addObject:version];
     }
     self.versions = versionList.copy;
@@ -64,6 +65,42 @@
         }
     }
     return result.copy;
+}
+
+- (NSString *)cachedURLForProductID:(NSString *)productID {
+    if (!productID.length) return @"";
+    NSDictionary *entry = nil;
+    @synchronized (self) { entry = _entriesByID[productID]; }
+    if (![entry isKindOfClass:NSDictionary.class]) return @"";
+
+    NSArray *keys = @[@"jumpUrl", @"jumpURL", @"jump_url", @"shareUrl", @"shareURL", @"share_url",
+                     @"detailUrl", @"detailURL", @"detail_url", @"itemUrl", @"itemURL", @"item_url",
+                     @"url", @"link", @"h5Url", @"h5URL", @"webUrl", @"webURL"];
+    for (NSString *key in keys) {
+        id v = entry[key];
+        if ([v isKindOfClass:NSURL.class]) return ((NSURL *)v).absoluteString ?: @"";
+        if ([v isKindOfClass:NSString.class] && [(NSString *)v length]) {
+            NSString *u = [(NSString *)v stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            if ([u hasPrefix:@"http://"] || [u hasPrefix:@"https://"] || [u hasPrefix:@"zz://"]) return u;
+        }
+    }
+
+    // Some responses nest the navigational URL inside a jump/detail object.
+    for (NSString *key in @[@"jump", @"detail", @"share", @"linkInfo", @"redirect"]) {
+        id child = entry[key];
+        if ([child isKindOfClass:NSDictionary.class]) {
+            NSDictionary *d = (NSDictionary *)child;
+            for (NSString *k in keys) {
+                id v = d[k];
+                if ([v isKindOfClass:NSURL.class]) return ((NSURL *)v).absoluteString ?: @"";
+                if ([v isKindOfClass:NSString.class] && [(NSString *)v length]) {
+                    NSString *u = [(NSString *)v stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+                    if ([u hasPrefix:@"http://"] || [u hasPrefix:@"https://"] || [u hasPrefix:@"zz://"]) return u;
+                }
+            }
+        }
+    }
+    return @"";
 }
 
 - (BOOL)shouldDisplayProductID:(NSString *)productID {

@@ -393,27 +393,151 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
             (unsigned long)ZZNetworkModifiedResponses()];
 }
 
+@interface ZZVersionResultCell : UITableViewCell
+@property(nonatomic, copy) void (^openHandler)(void);
+@property(nonatomic, copy) void (^copyHandler)(void);
+@end
+
+@implementation ZZVersionResultCell
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
+    self = [super initWithStyle:UITableViewCellStyleDefault reuseIdentifier:reuseIdentifier];
+    if (self) self.selectionStyle = UITableViewCellSelectionStyleNone;
+    return self;
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    self.textLabel.numberOfLines = 0;
+    self.detailTextLabel.numberOfLines = 0;
+}
+@end
+
+@interface ZZVersionResultsController : UITableViewController
+@property(nonatomic, copy) NSArray<NSDictionary *> *entries;
+@property(nonatomic, weak) UIViewController *presentingVC;
+@end
+
+@implementation ZZVersionResultsController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = [NSString stringWithFormat:@"系统版本筛选 · %lu 条", (unsigned long)self.entries.count];
+    self.tableView.backgroundColor = UIColor.systemBackgroundColor;
+    self.tableView.separatorInset = UIEdgeInsetsMake(0, 16, 0, 16);
+    self.tableView.rowHeight = UITableViewAutomaticDimension;
+    self.tableView.estimatedRowHeight = 112.0;
+    self.tableView.allowsSelection = NO;
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemClose target:self action:@selector(close)] ;
+}
+
+- (void)close {
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+static NSString *ZZEntryTitle(NSDictionary *d) {
+    for (NSString *key in @[@"title", @"name", @"itemTitle", @"goodsName", @"productName"]) {
+        id v = d[key];
+        if ([v isKindOfClass:NSString.class] && [(NSString *)v length]) return v;
+    }
+    return @"商品";
+}
+
+static NSString *ZZEntryPrice(NSDictionary *d) {
+    for (NSString *key in @[@"price", @"sellPrice", @"salePrice", @"currentPrice", @"amount"]) {
+        id v = d[key];
+        if (v && [v respondsToSelector:@selector(description)]) return [v description];
+    }
+    return @"-";
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    return self.entries.count;
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    static NSString *reuse = @"ZZVersionResultCell";
+    ZZVersionResultCell *cell = [tableView dequeueReusableCellWithIdentifier:reuse];
+    if (!cell) cell = [[ZZVersionResultCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:reuse];
+    NSDictionary *d = self.entries[indexPath.row];
+    NSString *title = ZZEntryTitle(d);
+    NSString *version = ZZProductVersionFromDictionary(d);
+    NSString *pid = ZZProductIDFromInfo(d);
+    NSString *price = ZZEntryPrice(d);
+    NSString *urlString = [ZZProductVisibility.shared cachedURLForProductID:pid];
+
+    NSMutableString *detail = [NSMutableString stringWithFormat:@"¥%@  |  iOS %@", price, version.length ? version : @"未知"];
+    if (pid.length) [detail appendFormat:@"\nID: %@", pid];
+    if (urlString.length) [detail appendString:@"\n链接：已获取"];
+    else [detail appendString:@"\n链接：未获取"];
+
+    cell.textLabel.text = [NSString stringWithFormat:@"%lu. %@", (unsigned long)(indexPath.row + 1), title];
+    cell.detailTextLabel.text = detail;
+    cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
+    cell.detailTextLabel.numberOfLines = 0;
+
+    // Put action buttons in the accessory area so every result has a direct
+    // action, matching the reference UI's "复制链接 / 打开" behavior.
+    UIView *accessory = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 92, 36)];
+    UIButton *copyButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    copyButton.frame = CGRectMake(0, 0, 44, 36);
+    [copyButton setTitle:@"复制" forState:UIControlStateNormal];
+    copyButton.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+    copyButton.tag = indexPath.row;
+    [copyButton addTarget:self action:@selector(copyResult:) forControlEvents:UIControlEventTouchUpInside];
+    copyButton.enabled = urlString.length > 0;
+
+    UIButton *openButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    openButton.frame = CGRectMake(48, 0, 44, 36);
+    [openButton setTitle:@"打开" forState:UIControlStateNormal];
+    openButton.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+    openButton.tag = indexPath.row;
+    [openButton addTarget:self action:@selector(openResult:) forControlEvents:UIControlEventTouchUpInside];
+    openButton.enabled = urlString.length > 0;
+
+    [accessory addSubview:copyButton];
+    [accessory addSubview:openButton];
+    cell.accessoryView = accessory;
+    return cell;
+}
+
+- (void)copyResult:(UIButton *)sender {
+    if (sender.tag >= self.entries.count) return;
+    NSDictionary *d = self.entries[sender.tag];
+    NSString *pid = ZZProductIDFromInfo(d);
+    NSString *url = [ZZProductVisibility.shared cachedURLForProductID:pid];
+    if (!url.length) return;
+    UIPasteboard.generalPasteboard.string = url;
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"已复制" message:@"商品链接已复制到剪贴板。" preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+
+- (void)openResult:(UIButton *)sender {
+    if (sender.tag >= self.entries.count) return;
+    NSDictionary *d = self.entries[sender.tag];
+    NSString *pid = ZZProductIDFromInfo(d);
+    NSString *urlString = [ZZProductVisibility.shared cachedURLForProductID:pid];
+    NSURL *url = [NSURL URLWithString:urlString];
+    if (!url) return;
+    [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil];
+}
+
+@end
+
 - (void)showVersionResultsFrom:(UIViewController *)vc {
     NSArray<NSDictionary *> *entries = [ZZProductVisibility.shared cachedEntriesMatchingCurrentVersionRange];
-    NSMutableString *message = [NSMutableString stringWithFormat:@"系统版本筛选结果：%lu 条\n\n", (unsigned long)entries.count];
-    NSUInteger limit = MIN((NSUInteger)12, entries.count);
-    for (NSUInteger i = 0; i < limit; i++) {
-        NSDictionary *d = entries[i];
-        NSString *title = @"商品";
-        for (NSString *key in @[@"title", @"name", @"itemTitle", @"goodsName"]) {
-            id v = d[key]; if ([v isKindOfClass:NSString.class] && [v length]) { title = v; break; }
-        }
-        NSString *version = ZZProductVersionFromDictionary(d);
-        NSString *pid = ZZProductIDFromInfo(d);
-        id price = d[@"price"] ?: d[@"sellPrice"] ?: d[@"salePrice"];
-        [message appendFormat:@"%lu. %@\n   iOS %@  ¥%@  ID:%@\n\n", (unsigned long)(i + 1), title, version.length ? version : @"未知", price ? [price description] : @"-", pid.length ? pid : @"-"];
+    ZZVersionResultsController *results = [[ZZVersionResultsController alloc] initWithStyle:UITableViewStylePlain];
+    results.entries = entries;
+    results.presentingVC = vc;
+
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:results];
+    nav.modalPresentationStyle = UIModalPresentationPageSheet;
+    if (@available(iOS 15.0, *)) {
+        UISheetPresentationController *sheet = nav.sheetPresentationController;
+        sheet.detents = @[UISheetPresentationControllerDetent.mediumDetent, UISheetPresentationControllerDetent.largeDetent];
+        sheet.prefersGrabberVisible = YES;
+        sheet.preferredCornerRadius = 18.0;
     }
-    if (entries.count > limit) [message appendFormat:@"仅显示前 %lu 条。", (unsigned long)limit];
-    if (!entries.count) [message appendString:@"当前没有已缓存且命中范围的商品。\n先让商品详情/列表网络请求完成，再点这里查看。"];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"系统版本筛选结果" message:message preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"刷新" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [self showVersionResultsFrom:vc]; }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-    [vc presentViewController:alert animated:YES completion:nil];
+    [vc presentViewController:nav animated:YES completion:nil];
 }
 
 - (void)presentSettingsFrom:(UIViewController *)vc {
@@ -423,12 +547,12 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
                                                             preferredStyle:UIAlertControllerStyleAlert];
 
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
-        field.placeholder = @"最低版本（如 1.2.3）";
+        field.placeholder = @"最低系统版本（如 18.0.0）";
         field.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
         field.text = s.minimumVersion ?: @"";
     }];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
-        field.placeholder = @"最高版本（如 2.0.0）";
+        field.placeholder = @"最高系统版本（如 26.6.1）";
         field.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
         field.text = s.maximumVersion ?: @"";
     }];

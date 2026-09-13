@@ -25,19 +25,19 @@ BOOL ZZFilterDebugSelfTest(void) {
         f.maximumVersion = @"5.0";
 
         NSDictionary *good = @{
-            @"id": @"1", @"title": @"300", @"version": @"3.1"
+            @"id": @"1", @"title": @"300", @"version": @"1.0.0", @"key": @"系统版本", @"value": @"iOS 3.1"
         };
         NSDictionary *low = @{
-            @"id": @"2", @"title": @"50", @"version": @"3.1"
+            @"id": @"2", @"title": @"50", @"version": @"1.0.0", @"systemVersion": @"iOS 3.1"
         };
         NSDictionary *high = @{
-            @"id": @"3", @"title": @"800", @"version": @"3.1"
+            @"id": @"3", @"title": @"800", @"version": @"1.0.0", @"iosVersion": @"iOS 3.1"
         };
         NSDictionary *old = @{
-            @"id": @"4", @"title": @"300", @"version": @"1.9"
+            @"id": @"4", @"title": @"300", @"version": @"1.0.0", @"value": @"iOS 1.9"
         };
         NSDictionary *newer = @{
-            @"id": @"5", @"title": @"300", @"version": @"5.1"
+            @"id": @"5", @"title": @"300", @"version": @"1.0.0", @"iosVersion": @"iOS 5.1"
         };
 
         ok &= ZZAssert([f shouldDisplayProduct:good], @"in-range item kept");

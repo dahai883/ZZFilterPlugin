@@ -11,6 +11,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy) NSArray<NSString *> *versions;
 - (NSUInteger)cachedEntryCount;
 - (NSArray<NSDictionary *> *)cachedEntriesMatchingCurrentVersionRange;
+- (NSString *)cachedURLForProductID:(NSString *)productID;
 @end
 
 FOUNDATION_EXPORT NSString *ZZProductIDFromInfo(NSDictionary *info);

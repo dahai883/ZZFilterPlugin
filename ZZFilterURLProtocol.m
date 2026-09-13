@@ -98,7 +98,27 @@ static void ZZCollectVersionEntries(id root, NSUInteger depth, NSUInteger *count
             [[ZZProductVisibility shared] recordEntries:@[d] forProductIDs:@[pid]];
             if (countOut) *countOut += 1;
         }
-        for (id value in d.allValues) {
+        // Detail payloads may store attributes under itemId2AttrInfo, where the
+        // product ID is the dictionary key rather than an `id` field. Preserve
+        // that association before descending.
+        id attrMap = d[@"itemId2AttrInfo"];
+        if ([attrMap isKindOfClass:NSDictionary.class]) {
+            for (NSString *mappedID in (NSDictionary *)attrMap) {
+                id mapped = ((NSDictionary *)attrMap)[mappedID];
+                if (![mapped isKindOfClass:NSDictionary.class]) continue;
+                NSMutableDictionary *entry = [mapped mutableCopy];
+                if (!ZZProductIDFromInfo(entry).length && mappedID.length) entry[@"productId"] = mappedID;
+                NSString *v = ZZProductVersionFromDictionary(entry);
+                if (v.length) {
+                    [[ZZProductVisibility shared] recordEntries:@[entry] forProductIDs:@[mappedID]];
+                    if (countOut) *countOut += 1;
+                }
+                ZZCollectVersionEntries(entry, depth + 1, countOut);
+            }
+        }
+        for (NSString *key in d) {
+            if ([key isEqualToString:@"itemId2AttrInfo"]) continue;
+            id value = d[key];
             if ([value isKindOfClass:NSDictionary.class] || [value isKindOfClass:NSArray.class]) {
                 ZZCollectVersionEntries(value, depth + 1, countOut);
             }
@@ -244,10 +264,17 @@ static void ZZWaitForDetailEnrichment(NSArray<NSString *> *ids, NSURLRequest *so
     }
 
     NSMutableArray<NSString *> *ids = [NSMutableArray arrayWithCapacity:products.count];
+    // Keep the original listing object (especially jumpUrl) in the cache even
+    // when the listing card itself has no system-version field. The detail
+    // response is merged into this object later, so result rows can retain a
+    // real navigational link instead of displaying an ID-only record.
     for (id obj in products) {
         if ([obj isKindOfClass:NSDictionary.class]) {
             NSString *pid = ZZProductIDFromInfo(obj);
-            if (pid.length && ![ids containsObject:pid]) [ids addObject:pid];
+            if (pid.length) {
+                [[ZZProductVisibility shared] recordEntries:@[obj] forProductIDs:@[pid]];
+                if (![ids containsObject:pid]) [ids addObject:pid];
+            }
         }
     }
 
