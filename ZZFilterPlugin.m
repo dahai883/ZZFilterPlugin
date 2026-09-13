@@ -43,11 +43,13 @@ static void ZZFilterPluginLoaded(void) {
     ZZInstallNetworkInterception();
     ZZInstallUIFiltering();
     ZZInstallRuntimeFiltering();
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(__unused NSTimer *timer) {
-            ZZInstallRuntimeFiltering();
-        }];
-    });
+    // V11 repeatedly enumerated every Objective-C class/method once per second.
+    // On ZhuanZhuan this is over a million methods per scan and can consume a
+    // full CPU core. V12 uses only two bounded startup retries instead.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ ZZInstallRuntimeFiltering(); });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ ZZInstallRuntimeFiltering(); });
     // Keep constructor work minimal. UI setup is deferred to the main queue;
     // ZZOverlayBootstrap +load provides a second initialization path.
     dispatch_async(dispatch_get_main_queue(), ^{

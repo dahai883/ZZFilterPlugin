@@ -57,3 +57,8 @@ The implementation is an independent reimplementation and intentionally does not
 ## Runtime listing adapter
 
 This build adds an independent runtime adapter for known listing/model entry points when those classes and selectors are present at runtime. It filters model arrays before the host renders them and logs the selector, input count, output count, and hidden count. It does not copy implementation code from the reference binary.
+
+
+## V12 performance fix
+
+V11 diagnostic data showed that continuous full Objective-C runtime enumeration was too expensive on the host app. V12 removes the 1-second timer, rate-limits scans, performs only two bounded startup retries, and allows the exact known selector adapter to use Objective-C forwarding for non-void method signatures. The diagnostics "刷新" action can trigger a manual scan.

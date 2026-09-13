@@ -327,6 +327,7 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
                                                                      message:[self diagnosticSummary]
                                                               preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"刷新" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+        ZZInstallRuntimeFiltering();
         [self refreshButton];
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"重置统计" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {

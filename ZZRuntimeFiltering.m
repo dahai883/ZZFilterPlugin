@@ -21,6 +21,7 @@ static NSUInteger ZZRuntimeLastMethodCount;
 static NSString *ZZRuntimeLastSummary = @"尚未扫描";
 static NSMutableArray<NSString *> *ZZRuntimeCandidates;
 static NSUInteger ZZRuntimeCandidateTotal;
+static NSTimeInterval ZZRuntimeLastScanTime = 0;
 
 static NSInteger ZZCandidateScore(NSString *className, NSString *selectorName) {
     NSString *c = className.lowercaseString;
@@ -136,13 +137,15 @@ static BOOL ZZHookSelector(Class cls, SEL selector) {
     Method method = NULL;
     if (!ZZClassDeclaresSelector(cls, selector, &method) || !method) {
         ZZRuntimeHookFailures += 1;
+        NSLog(@"[ZZFilterUI] hook failure: selector not directly declared %@ %@",
+              NSStringFromClass(cls), NSStringFromSelector(selector));
         return NO;
     }
 
     const char *types = method_getTypeEncoding(method);
-    if (!types || types[0] != 'v') {
-        NSLog(@"[ZZFilterUI] skip non-void %@ %@ types=%s",
-              NSStringFromClass(cls), NSStringFromSelector(selector), types ?: "?");
+    if (!types) {
+        NSLog(@"[ZZFilterUI] skip method without type encoding %@ %@",
+              NSStringFromClass(cls), NSStringFromSelector(selector));
         ZZRuntimeHookFailures += 1;
         return NO;
     }
@@ -186,7 +189,8 @@ static BOOL ZZHookSelector(Class cls, SEL selector) {
     ZZOriginalForwardIMPs[hookKey] = [NSValue valueWithPointer:original];
     method_setImplementation(method, forwardingIMP);
     [ZZHookedSelectors addObject:hookKey];
-    NSLog(@"[ZZFilterUI] hooked-direct %@ %@", NSStringFromClass(cls), NSStringFromSelector(selector));
+    NSLog(@"[ZZFilterUI] hooked-direct %@ %@ types=%s",
+          NSStringFromClass(cls), NSStringFromSelector(selector), types);
     return YES;
 }
 
@@ -202,6 +206,14 @@ NSUInteger ZZRuntimeCandidateCount(void) { return ZZRuntimeCandidateTotal; }
 NSString *ZZRuntimeDiagnosticSummary(void) { return ZZRuntimeLastSummary ?: @""; }
 
 void ZZInstallRuntimeFiltering(void) {
+    // Full ObjC runtime enumeration is expensive on a large app. Never run it
+    // continuously; callers may request retries during startup, but each scan
+    // is rate-limited and stops once a hook has been installed.
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    if (ZZRuntimeLastScanTime > 0 && (now - ZZRuntimeLastScanTime) < 1.5) return;
+    if (ZZHookedSelectors.count > 0) return;
+    ZZRuntimeLastScanTime = now;
+
     static dispatch_once_t initOnce;
     dispatch_once(&initOnce, ^{
         ZZOriginalForwardIMPs = [NSMutableDictionary dictionary];
