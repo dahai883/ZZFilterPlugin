@@ -3,6 +3,7 @@
 #import "ZZRuntimeFiltering.h"
 #import "ZZProductVisibility.h"
 #import "ZZFilterURLProtocol.h"
+#import "ZZProductFilter.h"
 // Keep debug logging compatible with the iOS 17.5 SDK.
 // os_log's format argument must be a compile-time constant; forwarding a
 // variadic Objective-C format through a macro can trigger OS_LOG_STRING
