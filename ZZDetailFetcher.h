@@ -5,6 +5,8 @@ NS_ASSUME_NONNULL_BEGIN
 typedef void (^ZZDetailCompletion)(NSArray<NSDictionary *> *entries, NSError * _Nullable error);
 
 FOUNDATION_EXPORT NSUInteger ZZDetailHTTPResponses(void);
+FOUNDATION_EXPORT NSUInteger ZZDetailHTTP2xxResponses(void);
+FOUNDATION_EXPORT NSUInteger ZZDetailHTTPFailureResponses(void);
 
 @interface ZZDetailFetcher : NSObject
 + (instancetype)shared;
@@ -24,6 +26,14 @@ FOUNDATION_EXPORT NSUInteger ZZDetailHTTPResponses(void);
                         baseURL:(NSURL *)baseURL
                          headers:(NSDictionary<NSString *, NSString *> * _Nullable)headers
                       completion:(ZZDetailCompletion)completion;
+
+/// Validates a detail HTTP response and extracts one normalized entry when the
+/// response is a successful 2xx JSON/text payload. This mirrors the safe
+/// response-validation boundary of the reference implementation without
+/// touching activation, licensing, or signature state.
+- (NSDictionary * _Nullable)entryFromData:(NSData * _Nullable)data
+                                response:(NSURLResponse * _Nullable)response
+                                   error:(NSError * _Nullable)error;
 @end
 
 NS_ASSUME_NONNULL_END

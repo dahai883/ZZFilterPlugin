@@ -81,6 +81,16 @@ BOOL ZZFilterDebugSelfTest(void) {
         };
         ok &= ZZAssert([ZZProductVersionFromDictionary(flattened) isEqualToString:@"18.7.1"], @"flattened detail text extracts system version");
 
+        NSString *wrapped = @"{\"respCode\":\"0\",\"respData\":\"{\\\"params\\\":[{\\\"key\\\":\\\"系统版本\\\",\\\"value\\\":\\\"18.6.2\\\"}]}\"}";
+        ok &= ZZAssert([ZZProductVersionFromObject(wrapped) isEqualToString:@"18.6.2"], @"JSON string wrapper extracts system version");
+
+        NSDictionary *flatMap = @{
+            @"itemId2AttrInfo": @{
+                @"mapped-2": @{@"系统版本": @"iOS 19.1.0"}
+            }
+        };
+        ok &= ZZAssert([ZZProductVersionFromDictionary(flatMap) isEqualToString:@"19.1.0"], @"itemId2AttrInfo dictionary label extracts system version");
+
         NSData *json = [NSJSONSerialization dataWithJSONObject:@{
             @"items": @[good, low, high, old, newer]
         } options:0 error:nil];

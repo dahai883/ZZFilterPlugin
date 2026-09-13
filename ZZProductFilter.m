@@ -68,6 +68,16 @@ static NSString *ZZExtractVersionFromText(NSString *value) {
         NSRange r = [m rangeAtIndex:1];
         if (r.location != NSNotFound) return ZZNormalizeVersion([value substringWithRange:r]);
     }
+
+    // Detail endpoints sometimes serialize attribute objects into one long
+    // string. Keep the scan anchored to a system-version label so ordinary
+    // numbers such as price, year, app version, etc. are not mistaken for iOS.
+    NSRegularExpression *labelRe = [NSRegularExpression regularExpressionWithPattern:@"(?i)(?:系统\\s*版本(?:号)?|ios\\s*版本(?:号)?|iphone\\s*os\\s*版本?|ipad\\s*os\\s*版本?|os\\s*版本|system\\s*version)[^0-9]{0,120}(?:ios\\s*)?(\\d{1,3}(?:\\.\\d{1,3}){0,2})" options:0 error:NULL];
+    m = [labelRe firstMatchInString:value options:0 range:NSMakeRange(0, value.length)];
+    if (m) {
+        NSRange r = [m rangeAtIndex:1];
+        if (r.location != NSNotFound) return ZZNormalizeVersion([value substringWithRange:r]);
+    }
     return @"";
 }
 
@@ -188,8 +198,20 @@ static NSString *ZZFindVersionDeep(id obj, NSUInteger depth) {
         }
     }
 
-    // Last pass over nested containers. This is bounded by depth to avoid the
-    // expensive global runtime scan that caused the v11 watchdog issue.
+    // Some server variants hide the attribute inside a compact JSON/string
+    // representation under an otherwise unrelated key. Serialize the current
+    // object and look for an explicit system-version label in the text. This is
+    // deliberately bounded to the current object and depth, avoiding the old
+    // global runtime enumeration that caused the v11 watchdog issue.
+    NSError *serializationError = nil;
+    NSData *serialized = [NSJSONSerialization dataWithJSONObject:d options:0 error:&serializationError];
+    if (serialized.length) {
+        NSString *jsonText = [[NSString alloc] initWithData:serialized encoding:NSUTF8StringEncoding];
+        NSString *v = ZZExtractVersionFromText(jsonText);
+        if (v.length) return v;
+    }
+
+    // Last pass over nested containers. This is bounded by depth.
     for (NSString *key in d) {
         id child = d[key];
         if ([child isKindOfClass:NSDictionary.class] || [child isKindOfClass:NSArray.class]) {
@@ -202,6 +224,11 @@ static NSString *ZZFindVersionDeep(id obj, NSUInteger depth) {
 
 NSString *ZZProductVersionFromDictionary(NSDictionary *product) {
     return ZZFindVersionDeep(product, 0);
+}
+
+NSString *ZZProductVersionFromObject(id object) {
+    if (!object) return @"";
+    return ZZFindVersionDeep(object, 0);
 }
 
 static NSArray<NSNumber *> *ZZVersionComponents(NSString *value) {

@@ -14,5 +14,6 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 FOUNDATION_EXPORT NSString *ZZProductVersionFromDictionary(NSDictionary *product);
+NSString *ZZProductVersionFromObject(id object);
 
 NS_ASSUME_NONNULL_END

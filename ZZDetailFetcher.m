@@ -33,8 +33,12 @@
 }
 
 static NSUInteger ZZDetailHTTPResponseCount;
+static NSUInteger ZZDetailHTTP2xxCount;
+static NSUInteger ZZDetailHTTPFailureCount;
 
-NSUInteger ZZDetailHTTPResponses(void) { return ZZDetailHTTPResponseCount; }
+NSUInteger ZZDetailHTTPResponses(void) { @synchronized (ZZDetailFetcher.class) { return ZZDetailHTTPResponseCount; } }
+NSUInteger ZZDetailHTTP2xxResponses(void) { @synchronized (ZZDetailFetcher.class) { return ZZDetailHTTP2xxCount; } }
+NSUInteger ZZDetailHTTPFailureResponses(void) { @synchronized (ZZDetailFetcher.class) { return ZZDetailHTTPFailureCount; } }
 
 static NSString *ZZQueryValue(NSURL *url, NSArray<NSString *> *names) {
     if (!url) return @"";
@@ -84,6 +88,10 @@ static void ZZAppendQueryItemsFromURL(NSMutableArray<NSURLQueryItem *> *items, N
     NSMutableSet<NSString *> *seenNames = [NSMutableSet set];
     ZZAppendQueryItemsFromURL(items, targetURL, seenNames);
     ZZAppendQueryItemsFromURL(items, jumpURL, seenNames);
+    // Preserve the entire source request query context. The endpoint can use
+    // non-identifier parameters such as platform/source/token/quickStart that
+    // are not present on the list item itself.
+    ZZAppendQueryItemsFromURL(items, sourceRequest.URL, seenNames);
 
     // Ensure the identifiers the reference explicitly propagates exist.
     NSArray<NSArray<NSString *> *> *pairs = @[
@@ -118,22 +126,22 @@ static void ZZAppendQueryItemsFromURL(NSMutableArray<NSURLQueryItem *> *items, N
     request.timeoutInterval = 3.5;
 
     NSDictionary *sourceHeaders = sourceRequest.allHTTPHeaderFields ?: @{};
-    NSSet *allowed = [NSSet setWithArray:@[
-        @"Accept", @"Accept-Language", @"Authorization", @"Cookie", @"User-Agent",
-        @"Referer", @"Origin", @"X-Requested-With", @"Content-Type", @"Cache-Control",
-        @"Pragma", @"zzreqsign", @"zzreqt", @"zzreqallparam", @"zzreqversion",
-        @"X-Api-Version", @"X-Device-Id", @"X-Requested-With"
+    // The reference uses a denylist rather than a narrow allowlist, which is
+    // important for Zhuanzhuan's request-context headers that can vary by app
+    // release. Never forward transport-managed or cookie headers verbatim.
+    NSSet *deny = [NSSet setWithArray:@[
+        @"host", @"content-length", @"connection", @"cookie",
+        @"accept-encoding", @"proxy-connection", @"proxy-authenticate",
+        @"proxy-authorization", @"te", @"trailer", @"transfer-encoding",
+        @"upgrade"
     ]];
     [sourceHeaders enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSString *value, BOOL *stop) {
         NSString *lower = key.lowercaseString;
-        BOOL allowedName = [allowed containsObject:key] ||
-                           [@[@"accept", @"authorization", @"cookie", @"user-agent", @"referer", @"origin",
-                              @"zzreqsign", @"zzreqt", @"zzreqallparam", @"zzreqversion", @"x-requested-with",
-                              @"x-device-id", @"x-api-version"] containsObject:lower];
-        if (allowedName && key.length && value.length) [request setValue:value forHTTPHeaderField:key];
+        if (key.length && value.length && ![deny containsObject:lower]) {
+            [request setValue:value forHTTPHeaderField:key];
+        }
         (void)stop;
     }];
-
     NSArray<NSHTTPCookie *> *cookies = ZZCookiesForURL(targetURL);
     if (cookies.count) {
         NSDictionary *cookieFields = [NSHTTPCookie requestHeaderFieldsWithCookies:cookies];
@@ -143,6 +151,33 @@ static void ZZAppendQueryItemsFromURL(NSMutableArray<NSURLQueryItem *> *items, N
     if (![request valueForHTTPHeaderField:@"Accept"]) [request setValue:@"application/json, text/plain, */*" forHTTPHeaderField:@"Accept"];
     if (![request valueForHTTPHeaderField:@"Referer"] && sourceRequest.URL.absoluteString.length) [request setValue:sourceRequest.URL.absoluteString forHTTPHeaderField:@"Referer"];
     return request;
+}
+
+- (NSDictionary *)entryFromData:(NSData *)data response:(NSURLResponse *)response error:(NSError *)error {
+    if (error || !data.length || ![response isKindOfClass:NSHTTPURLResponse.class]) return nil;
+    NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
+    if (http.statusCode < 200 || http.statusCode > 299) return nil;
+
+    // First give the deep object parser a chance to recover nested attributes.
+    NSError *jsonError = nil;
+    id obj = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:&jsonError];
+    if (obj) {
+        NSMutableDictionary *entry = [NSMutableDictionary dictionary];
+        NSString *version = ZZProductVersionFromObject(obj);
+        if (version.length) entry[@"zzSystemVersion"] = version;
+
+        if ([obj isKindOfClass:NSDictionary.class]) [entry addEntriesFromDictionary:(NSDictionary *)obj];
+        if (!entry.count) entry = [NSMutableDictionary dictionaryWithDictionary:@{}];
+        return version.length ? entry.copy : nil;
+    }
+
+    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (!text.length) text = [[NSString alloc] initWithData:data encoding:NSASCIIStringEncoding];
+    if (!text.length) return nil;
+
+    NSString *version = ZZProductVersionFromObject(text);
+    if (!version.length) return nil;
+    return @{ @"detailText": text, @"zzSystemVersion": version };
 }
 
 - (void)fetchDetailsForProductIDs:(NSArray<NSString *> *)productIDs
@@ -207,7 +242,11 @@ static void ZZAppendQueryItemsFromURL(NSMutableArray<NSURLQueryItem *> *items, N
                 if ([response isKindOfClass:NSHTTPURLResponse.class]) {
                     NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
                     ZZStoreResponseCookies(http, response.URL ?: request.URL);
-                    @synchronized (self) { ZZDetailHTTPResponseCount += 1; }
+                    @synchronized (ZZDetailFetcher.class) {
+                        ZZDetailHTTPResponseCount += 1;
+                        if (http.statusCode >= 200 && http.statusCode <= 299) ZZDetailHTTP2xxCount += 1;
+                        else ZZDetailHTTPFailureCount += 1;
+                    }
                     NSString *contentType = http.allHeaderFields[@"Content-Type"] ?: http.allHeaderFields[@"content-type"] ?: @"";
                     ZZFilterDebugWrite(@"[ZZFilterDetail] response status=%ld type=%@ bytes=%lu url=%@",
                                        (long)http.statusCode, contentType,
@@ -215,26 +254,25 @@ static void ZZAppendQueryItemsFromURL(NSMutableArray<NSURLQueryItem *> *items, N
                 }
                 if (error) {
                     @synchronized (self) { if (!firstError) firstError = error; }
-                } else if (data.length) {
-                    NSError *jsonError = nil;
-                    id obj = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:&jsonError];
-                    if (obj) {
-                        [self collectEntriesFromObject:obj fallbackProductID:pid into:entries lock:entriesLock];
-                    } else {
+                } else {
+                    NSDictionary *entry = [self entryFromData:data response:response error:error];
+                    if (entry.count) {
+                        NSMutableDictionary *candidate = [entry mutableCopy];
+                        if (!ZZProductIDFromInfo(candidate).length) candidate[@"productId"] = pid;
+                        NSString *version = ZZProductVersionFromDictionary(candidate);
+                        if (version.length) {
+                            candidate[@"zzSystemVersion"] = version;
+                            @synchronized (entriesLock) { [entries addObject:candidate.copy]; }
+                        }
+                    } else if (data.length) {
+                        // Keep a second text pass even when JSON parsed but the
+                        // object shape was scalar or otherwise unexpected.
                         NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
                         if (!text.length) text = [[NSString alloc] initWithData:data encoding:NSASCIIStringEncoding];
-                        if (text.length) {
-                            // Some detail endpoints return HTML or a JSON string wrapper.
-                            // Keep the raw text on the candidate so the v28 extractor can
-                            // recover an explicit iOS/system-version marker.
-                            NSMutableDictionary *candidate = [NSMutableDictionary dictionary];
-                            candidate[@"productId"] = pid;
-                            candidate[@"detailText"] = text;
-                            NSString *version = ZZProductVersionFromDictionary(candidate);
-                            if (version.length) {
-                                candidate[@"zzSystemVersion"] = version;
-                                @synchronized (entriesLock) { [entries addObject:candidate.copy]; }
-                            }
+                        NSString *version = ZZProductVersionFromObject(text);
+                        if (version.length) {
+                            NSDictionary *candidate = @{ @"productId": pid, @"detailText": text, @"zzSystemVersion": version };
+                            @synchronized (entriesLock) { [entries addObject:candidate]; }
                         }
                     }
                 }
@@ -257,8 +295,35 @@ static void ZZAppendQueryItemsFromURL(NSMutableArray<NSURLQueryItem *> *items, N
     if (!obj) return;
     if ([obj isKindOfClass:NSString.class]) {
         NSString *text = [(NSString *)obj stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        if (([text hasPrefix:@"{"] || [text hasPrefix:@"["]) && text.length > 2) {
-            id parsed = [NSJSONSerialization JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding] options:NSJSONReadingMutableContainers error:NULL];
+        if (!text.length) return;
+        NSString *directVersion = ZZProductVersionFromObject(text);
+        if (directVersion.length && fallbackPID.length) {
+            NSDictionary *candidate = @{ @"productId": fallbackPID, @"detailText": text, @"zzSystemVersion": directVersion };
+            @synchronized (lock) { [entries addObject:candidate]; }
+        }
+
+        // Detail responses are often JSON encoded as a JSON string (sometimes
+        // more than once). Try a few bounded decode layers, including percent
+        // decoding, rather than requiring the text to start with '{' or '['.
+        NSString *cursor = text;
+        for (NSUInteger layer = 0; layer < 4; layer++) {
+            NSData *data = [cursor dataUsingEncoding:NSUTF8StringEncoding];
+            if (!data.length) break;
+            id parsed = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:NULL];
+            if (!parsed || (parsed == obj)) break;
+            if ([parsed isKindOfClass:NSString.class]) {
+                NSString *next = [(NSString *)parsed stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+                if (!next.length || [next isEqualToString:cursor]) break;
+                cursor = next;
+                continue;
+            }
+            [self collectEntriesFromObject:parsed fallbackProductID:fallbackPID into:entries lock:lock];
+            break;
+        }
+        NSString *decoded = [cursor stringByRemovingPercentEncoding];
+        if (decoded.length && ![decoded isEqualToString:cursor]) {
+            NSData *data = [decoded dataUsingEncoding:NSUTF8StringEncoding];
+            id parsed = data.length ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:NULL] : nil;
             if (parsed) [self collectEntriesFromObject:parsed fallbackProductID:fallbackPID into:entries lock:lock];
         }
         return;
@@ -288,15 +353,10 @@ static void ZZAppendQueryItemsFromURL(NSMutableArray<NSURLQueryItem *> *items, N
         if ([attrMap isKindOfClass:NSDictionary.class]) {
             for (NSString *mappedID in (NSDictionary *)attrMap) {
                 id mapped = ((NSDictionary *)attrMap)[mappedID];
-                if (![mapped isKindOfClass:NSDictionary.class]) continue;
-                NSMutableDictionary *entry = [mapped mutableCopy];
-                NSString *mappedPID = ZZProductIDFromInfo(entry);
+                NSString *mappedPID = nil;
+                if ([mapped isKindOfClass:NSDictionary.class]) mappedPID = ZZProductIDFromInfo(mapped);
                 if (!mappedPID.length) mappedPID = mappedID.length ? mappedID : (pid.length ? pid : fallbackPID);
-                if (mappedPID.length) entry[@"productId"] = mappedPID;
-                if (ZZProductVersionFromDictionary(entry).length && mappedPID.length) {
-                    @synchronized (lock) { [entries addObject:entry.copy]; }
-                }
-                [self collectEntriesFromObject:entry fallbackProductID:mappedPID into:entries lock:lock];
+                [self collectEntriesFromObject:mapped fallbackProductID:mappedPID into:entries lock:lock];
             }
         }
 
@@ -304,14 +364,20 @@ static void ZZAppendQueryItemsFromURL(NSMutableArray<NSURLQueryItem *> *items, N
         // fields can still be associated with the product ID and title/link.
         id key = d[@"key"] ?: d[@"name"] ?: d[@"attrName"] ?: d[@"attributeName"];
         id value = d[@"value"] ?: d[@"attrValue"] ?: d[@"attributeValue"] ?: d[@"content"];
-        if (pid.length && [key isKindOfClass:NSString.class] && [value isKindOfClass:NSString.class]) {
+        if (pid.length && [key isKindOfClass:NSString.class] && (value != nil)) {
             NSString *keyLower = [key lowercaseString];
-            BOOL systemLabel = [keyLower containsString:@"ios"] || [keyLower containsString:@"系统版本"] || [keyLower containsString:@"systemversion"] || [keyLower containsString:@"system_version"];
-            if (systemLabel && [[value lowercaseString] containsString:@"ios"]) {
+            BOOL systemLabel = [keyLower containsString:@"ios"] || [keyLower containsString:@"系统版本"] ||
+                                [keyLower containsString:@"systemversion"] || [keyLower containsString:@"system_version"] ||
+                                [keyLower containsString:@"system version"] || [keyLower containsString:@"os版本"];
+            if (systemLabel) {
                 NSMutableDictionary *merged = [candidate mutableCopy];
                 merged[@"key"] = key;
                 merged[@"value"] = value;
-                @synchronized (lock) { [entries addObject:merged.copy]; }
+                NSString *v = ZZProductVersionFromObject(merged);
+                if (v.length) {
+                    merged[@"zzSystemVersion"] = v;
+                    @synchronized (lock) { [entries addObject:merged.copy]; }
+                }
             }
         }
 
