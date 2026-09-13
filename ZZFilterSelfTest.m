@@ -46,6 +46,29 @@ BOOL ZZFilterDebugSelfTest(void) {
         ok &= ZZAssert(![f shouldDisplayProduct:old], @"below version removed");
         ok &= ZZAssert(![f shouldDisplayProduct:newer], @"above version removed");
 
+        // Regression test for v26: attributes stored inside an NSArray must be
+        // traversed instead of being rejected by ZZFindVersionDeep.
+        NSDictionary *arrayNested = @{
+            @"id": @"array-1",
+            @"title": @"iPhone 15 Pro Max 256G",
+            @"version": @"1.0.0",
+            @"attrs": @[
+                @{ @"key": @"颜色", @"value": @"黑色" },
+                @{ @"key": @"系统版本", @"value": @"iOS 18.6.2" }
+            ]
+        };
+        ok &= ZZAssert([ZZProductVersionFromDictionary(arrayNested) isEqualToString:@"18.6.2"], @"array attribute extracts system version");
+        ok &= ZZAssert([f shouldDisplayProduct:arrayNested], @"array attribute in-range item kept");
+
+        NSDictionary *mapped = @{
+            @"itemId2AttrInfo": @{
+                @"mapped-1": @[
+                    @{ @"key": @"系统版本", @"value": @"iOS 26.4.1" }
+                ]
+            }
+        };
+        ok &= ZZAssert([ZZProductVersionFromDictionary(mapped) isEqualToString:@"26.4.1"], @"itemId2AttrInfo array extracts system version");
+
         NSData *json = [NSJSONSerialization dataWithJSONObject:@{
             @"items": @[good, low, high, old, newer]
         } options:0 error:nil];

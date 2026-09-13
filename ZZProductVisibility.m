@@ -30,20 +30,26 @@
         if (![entry isKindOfClass:NSDictionary.class]) continue;
         NSString *pid = i < ids.count ? ids[i] : ZZProductIDFromInfo(entry);
         if (![pid isKindOfClass:NSString.class] || !pid.length) continue;
+        NSString *version = ZZProductVersionFromDictionary(entry);
         @synchronized (self) {
             NSDictionary *old = _entriesByID[pid];
-            if ([old isKindOfClass:NSDictionary.class]) {
-                NSMutableDictionary *merged = [old mutableCopy];
-                [merged addEntriesFromDictionary:entry];
-                _entriesByID[pid] = merged.copy;
-            } else {
-                _entriesByID[pid] = entry;
+            NSMutableDictionary *merged = [old isKindOfClass:NSDictionary.class] ? [old mutableCopy] : [NSMutableDictionary dictionary];
+            if ([entry isKindOfClass:NSDictionary.class]) [merged addEntriesFromDictionary:entry];
+            // Persist the canonical extraction result. This makes the result
+            // page independent of the original attribute nesting shape: once
+            // a detail array yields iOS 18.6.2, later title/filter lookups read
+            // the stable marker even if the merged entry came from another page.
+            if (version.length) merged[@"zzSystemVersion"] = version;
+            _entriesByID[pid] = merged.copy;
+        }
+        if (version.length) {
+            @synchronized (self) {
+                NSMutableArray *allVersions = [self.versions mutableCopy] ?: [NSMutableArray array];
+                if (![allVersions containsObject:version]) [allVersions addObject:version];
+                self.versions = allVersions.copy;
             }
         }
-        NSString *version = ZZProductVersionFromDictionary(entry);
-        if (version.length) [versionList addObject:version];
     }
-    self.versions = versionList.copy;
     NSLog(@"[ZZFilterUI] visibility cache updated entries=%lu ids=%lu versions=%lu",
           (unsigned long)entries.count, (unsigned long)ids.count, (unsigned long)versionList.count);
 }
