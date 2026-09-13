@@ -322,12 +322,11 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     NSUInteger detailRequests = ZZDetailPrefetchRequests();
     NSUInteger detailEntries = ZZDetailPrefetchEntries();
     return [NSString stringWithFormat:
-            @"插件：已加载\nUI Hook：%lu\nUI 调用：%lu\n处理商品：%lu\n隐藏商品：%lu\n网络拦截：%lu\n修改响应：%lu\n详情预取：%lu\n详情命中：%lu\n\n%@",
+            @"插件：已加载\nUI Hook：%lu\nUI 调用：%lu\n处理商品：%lu\n隐藏商品：%lu\n网络拦截：%lu\n修改响应：%lu\n详情预取：%lu\n详情命中：%lu",
             (unsigned long)hooks, (unsigned long)calls,
             (unsigned long)processed, (unsigned long)hidden,
             (unsigned long)network, (unsigned long)modified,
-            (unsigned long)detailRequests, (unsigned long)detailEntries,
-            ZZRuntimeDiagnosticSummary()];
+            (unsigned long)detailRequests, (unsigned long)detailEntries];
 }
 
 - (void)showDiagnosticsFrom:(UIViewController *)vc {
