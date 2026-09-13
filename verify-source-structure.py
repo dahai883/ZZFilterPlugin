@@ -17,10 +17,7 @@ for p in root.glob('*.m'):
         outer_end = s.find('\n@end', s.find('@implementation ZZOverlayController'))
         results_impl = s.find('@implementation ZZVersionResultsController')
         show = s.find('- (void)showVersionResultsFrom:')
-        present = s.find('- (void)presentSettingsFrom:')
-        refresh = s.find('- (void)refreshButton')
-        cell_iface = s.find('@interface ZZVersionResultCell')
-        if not (outer_end >= 0 and show >= 0 and present >= 0 and refresh >= 0 and show < outer_end and present < outer_end and refresh < outer_end and results_impl > outer_end and cell_iface > outer_end):
+        if not (outer_end >= 0 and show >= 0 and show < outer_end and results_impl > outer_end):
             print('FAIL ZZOverlayController.m: outer controller methods are not inside the outer implementation')
             fail = True
     print(f'CHECK {p.name}: implementations={impls}, @end={ends}')

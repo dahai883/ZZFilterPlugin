@@ -58,9 +58,14 @@
     filter.enabled = s.enabled;
     filter.minimumVersion = s.minimumVersion;
     filter.maximumVersion = s.maximumVersion;
+    BOOL hasRange = s.minimumVersion.length || s.maximumVersion.length;
     NSMutableArray *result = [NSMutableArray array];
     @synchronized (self) {
         for (NSDictionary *entry in _entriesByID.allValues) {
+            // Strict result mode: a row without a real iOS/system version is
+            // never presented as a version-filter hit when a range is set.
+            NSString *version = ZZProductVersionFromDictionary(entry);
+            if (hasRange && !version.length) continue;
             if ([filter shouldDisplayProduct:entry]) [result addObject:entry];
         }
     }
@@ -107,7 +112,9 @@
     if (!ZZSettings.shared.enabled || !productID.length) return YES;
     NSDictionary *entry = nil;
     @synchronized (self) { entry = _entriesByID[productID]; }
-    if (!entry) return YES;
+    if (!entry) return !(ZZSettings.shared.minimumVersion.length || ZZSettings.shared.maximumVersion.length);
+    BOOL hasRange = ZZSettings.shared.minimumVersion.length || ZZSettings.shared.maximumVersion.length;
+    if (hasRange && !ZZProductVersionFromDictionary(entry).length) return NO;
     ZZProductFilter *filter = [ZZProductFilter new];
     ZZSettings *s = ZZSettings.shared;
     filter.enabled = s.enabled;

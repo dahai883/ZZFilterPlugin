@@ -19,11 +19,6 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     NSLog(@"[ZZOverlay][ERROR] " fmt, ##__VA_ARGS__); \
 } while (0)
 
-@interface ZZVersionResultsController : UITableViewController
-@property(nonatomic, copy) NSArray<NSDictionary *> *entries;
-@property(nonatomic, weak) UIViewController *presentingVC;
-@end
-
 @interface ZZOverlayController ()
 @property(nonatomic, strong) UIButton *button;
 @property(nonatomic, weak) UIWindow *hostWindow;
@@ -508,6 +503,11 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
 }
 @end
 
+@interface ZZVersionResultsController : UITableViewController
+@property(nonatomic, copy) NSArray<NSDictionary *> *entries;
+@property(nonatomic, weak) UIViewController *presentingVC;
+@end
+
 @implementation ZZVersionResultsController
 
 - (void)viewDidLoad {
@@ -526,11 +526,21 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
 }
 
 static NSString *ZZEntryTitle(NSDictionary *d) {
+    NSString *title = @"商品";
     for (NSString *key in @[@"title", @"name", @"itemTitle", @"goodsName", @"productName"]) {
         id v = d[key];
-        if ([v isKindOfClass:NSString.class] && [(NSString *)v length]) return v;
+        if ([v isKindOfClass:NSString.class] && [(NSString *)v length]) {
+            title = [v stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            break;
+        }
     }
-    return @"商品";
+    NSString *version = ZZProductVersionFromDictionary(d);
+    if (version.length) {
+        // Make the system version part of the product name itself so the user
+        // can distinguish results immediately, matching the requested UI.
+        return [NSString stringWithFormat:@"%@ · iOS %@", title, version];
+    }
+    return title;
 }
 
 static NSString *ZZEntryPrice(NSDictionary *d) {
@@ -556,7 +566,8 @@ static NSString *ZZEntryPrice(NSDictionary *d) {
     NSString *price = ZZEntryPrice(d);
     NSString *urlString = [ZZProductVisibility.shared cachedURLForProductID:pid];
 
-    NSMutableString *detail = [NSMutableString stringWithFormat:@"¥%@  |  iOS %@", price, version.length ? version : @"未知"];
+    NSMutableString *detail = [NSMutableString stringWithFormat:@"¥%@", price];
+    if (!version.length) [detail appendString:@"  |  系统版本未知"];
     if (pid.length) [detail appendFormat:@"\nID: %@", pid];
     if (urlString.length) [detail appendString:@"\n链接：已获取"];
     else [detail appendString:@"\n链接：未获取"];

@@ -201,7 +201,14 @@ static NSArray *ZZFilterProducts(NSArray *products, NSUInteger *knownOut) {
             keep = [filter shouldDisplayProduct:d];
         } else {
             NSString *pid = ZZProductIDFromInfo(d);
-            if (pid.length) keep = [[ZZProductVisibility shared] shouldDisplayProductID:pid];
+            // Strict version mode: after attempting detail enrichment, an
+            // unversioned card cannot be treated as a match. This prevents
+            // the listing from showing products outside the requested range.
+            if (settings.minimumVersion.length || settings.maximumVersion.length) {
+                keep = pid.length ? [[ZZProductVisibility shared] shouldDisplayProductID:pid] : NO;
+            } else {
+                keep = YES;
+            }
         }
         if (keep) [result addObject:obj];
     }

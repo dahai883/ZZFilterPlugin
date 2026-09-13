@@ -16,5 +16,5 @@ NSUInteger ZZRuntimeFilteringHookCount(void) { return 0; }
 NSUInteger ZZRuntimeFilteringCalls(void) { return ZZRuntimeCalls; }
 NSUInteger ZZRuntimeCandidateCount(void) { return 0; }
 NSString *ZZRuntimeDiagnosticSummary(void) {
-    return @"V14: UI runtime 扫描已关闭（稳定性保护）；系统版本筛选走列表响应 + 商品详情缓存";
+    return @"V20: UI runtime 扫描已关闭（稳定性保护）；系统版本筛选走列表响应 + 商品详情缓存";
 }
