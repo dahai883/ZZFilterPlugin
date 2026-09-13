@@ -9,5 +9,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 FOUNDATION_EXPORT NSUInteger ZZNetworkInterceptedRequests(void);
 FOUNDATION_EXPORT NSUInteger ZZNetworkModifiedResponses(void);
+FOUNDATION_EXPORT NSUInteger ZZDetailPrefetchRequests(void);
+FOUNDATION_EXPORT NSUInteger ZZDetailPrefetchEntries(void);
 
 NS_ASSUME_NONNULL_END

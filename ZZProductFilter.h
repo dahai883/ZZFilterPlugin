@@ -13,4 +13,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSArray<NSDictionary *> *)filteredProducts:(NSArray<NSDictionary *> *)products;
 @end
 
+FOUNDATION_EXPORT NSString *ZZProductVersionFromDictionary(NSDictionary *product);
+
 NS_ASSUME_NONNULL_END

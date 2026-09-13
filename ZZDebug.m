@@ -22,12 +22,12 @@ NSString *ZZFilterDebugLogPath(void) {
     static NSString *path;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        NSString *primary = @"/var/mobile/ZZFilterPlugin-v11.log";
+        NSString *primary = @"/var/mobile/ZZFilterPlugin-v14.log";
         NSString *dir = [primary stringByDeletingLastPathComponent];
         BOOL ok = [[NSFileManager defaultManager] fileExistsAtPath:dir] ||
                   [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
         if (ok && [[NSFileManager defaultManager] isWritableFileAtPath:dir]) path = primary;
-        else path = @"/tmp/ZZFilterPlugin-v11.log";
+        else path = @"/tmp/ZZFilterPlugin-v14.log";
         if (![[NSFileManager defaultManager] fileExistsAtPath:path])
             [[NSData data] writeToFile:path atomically:YES];
     });
@@ -60,5 +60,5 @@ void ZZFilterDebugLogBuildInfo(void) {
 #else
     const char *arch = "unknown";
 #endif
-    ZZFilterDebugWrite(@"[ZZDebug] v11 loaded arch=%s iOS-min=16.0 log=%@", arch, ZZFilterDebugLogPath());
+    ZZFilterDebugWrite(@"[ZZDebug] v14 loaded arch=%s iOS-min=16.0 log=%@", arch, ZZFilterDebugLogPath());
 }

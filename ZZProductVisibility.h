@@ -9,6 +9,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)recordEntries:(NSArray *)entries forProductIDs:(NSArray<NSString *> *)productIDs;
 - (BOOL)shouldDisplayProductID:(NSString *)productID;
 @property(nonatomic, copy) NSArray<NSString *> *versions;
+- (NSUInteger)cachedEntryCount;
+- (NSArray<NSDictionary *> *)cachedEntriesMatchingCurrentVersionRange;
 @end
 
 FOUNDATION_EXPORT NSString *ZZProductIDFromInfo(NSDictionary *info);

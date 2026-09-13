@@ -6,9 +6,14 @@ typedef void (^ZZDetailCompletion)(NSArray<NSDictionary *> *entries, NSError * _
 
 @interface ZZDetailFetcher : NSObject
 @property(nonatomic, strong) NSURLSession *session;
+
+/// Fetches lightweight detail responses for product IDs. This is an
+/// independent data-enrichment helper; it does not alter activation or
+/// licensing state.
 - (void)fetchDetailsForProductIDs:(NSArray<NSString *> *)productIDs
-                              baseURL:(NSURL *)baseURL
-                          completion:(ZZDetailCompletion)completion;
+                         baseURL:(NSURL *)baseURL
+                       headers:(NSDictionary<NSString *, NSString *> * _Nullable)headers
+                    completion:(ZZDetailCompletion)completion;
 @end
 
 NS_ASSUME_NONNULL_END

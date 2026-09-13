@@ -30,7 +30,7 @@
         if (![entry isKindOfClass:NSDictionary.class]) continue;
         NSString *pid = i < ids.count ? ids[i] : ZZProductIDFromInfo(entry);
         if (![pid isKindOfClass:NSString.class] || !pid.length) continue;
-        _entriesByID[pid] = entry;
+        @synchronized (self) { _entriesByID[pid] = entry; }
         NSString *version = nil;
         for (NSString *key in @[@"version", @"modelVersion", @"goodsVersion", @"waresVersion", @"iosVersion", @"systemVersion", @"ios"]) {
             id value = entry[key];
@@ -47,9 +47,29 @@
           (unsigned long)entries.count, (unsigned long)ids.count, (unsigned long)versionList.count);
 }
 
+- (NSUInteger)cachedEntryCount {
+    @synchronized (self) { return _entriesByID.count; }
+}
+
+- (NSArray<NSDictionary *> *)cachedEntriesMatchingCurrentVersionRange {
+    ZZSettings *s = ZZSettings.shared;
+    ZZProductFilter *filter = [ZZProductFilter new];
+    filter.enabled = s.enabled;
+    filter.minimumVersion = s.minimumVersion;
+    filter.maximumVersion = s.maximumVersion;
+    NSMutableArray *result = [NSMutableArray array];
+    @synchronized (self) {
+        for (NSDictionary *entry in _entriesByID.allValues) {
+            if ([filter shouldDisplayProduct:entry]) [result addObject:entry];
+        }
+    }
+    return result.copy;
+}
+
 - (BOOL)shouldDisplayProductID:(NSString *)productID {
     if (!ZZSettings.shared.enabled || !productID.length) return YES;
-    NSDictionary *entry = _entriesByID[productID];
+    NSDictionary *entry = nil;
+    @synchronized (self) { entry = _entriesByID[productID]; }
     if (!entry) return YES;
     ZZProductFilter *filter = [ZZProductFilter new];
     ZZSettings *s = ZZSettings.shared;

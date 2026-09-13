@@ -313,13 +313,15 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     NSUInteger hidden = ZZFilterModelsHiddenCount();
     NSUInteger network = ZZNetworkInterceptedRequests();
     NSUInteger modified = ZZNetworkModifiedResponses();
-    NSUInteger candidates = ZZRuntimeCandidateCount();
+    NSUInteger detailRequests = ZZDetailPrefetchRequests();
+    NSUInteger detailEntries = ZZDetailPrefetchEntries();
     return [NSString stringWithFormat:
-            @"插件：已加载\nUI Hook：%lu\nUI 调用：%lu\n处理商品：%lu\n隐藏商品：%lu\n网络拦截：%lu\n修改响应：%lu\n运行时候选：%lu\n\n%@",
+            @"插件：已加载\nUI Hook：%lu\nUI 调用：%lu\n处理商品：%lu\n隐藏商品：%lu\n网络拦截：%lu\n修改响应：%lu\n详情预取：%lu\n详情命中：%lu\n\n%@",
             (unsigned long)hooks, (unsigned long)calls,
             (unsigned long)processed, (unsigned long)hidden,
             (unsigned long)network, (unsigned long)modified,
-            (unsigned long)candidates, ZZRuntimeDiagnosticSummary()];
+            (unsigned long)detailRequests, (unsigned long)detailEntries,
+            ZZRuntimeDiagnosticSummary()];
 }
 
 - (void)showDiagnosticsFrom:(UIViewController *)vc {
@@ -378,17 +380,39 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
 
 - (NSString *)summary {
     ZZSettings *s = ZZSettings.shared;
-    NSString *minText = s.minimumText > 0 ? [NSString stringWithFormat:@"%ld", (long)s.minimumText] : @"不限";
-    NSString *maxText = s.maximumText < NSIntegerMax ? [NSString stringWithFormat:@"%ld", (long)s.maximumText] : @"不限";
     NSString *minVer = s.minimumVersion.length ? s.minimumVersion : @"不限";
     NSString *maxVer = s.maximumVersion.length ? s.maximumVersion : @"不限";
-    return [NSString stringWithFormat:@"状态：%@\n数值范围：%@ ～ %@\n版本范围：%@ ～ %@\n\nUI Hook: %lu\n处理: %lu\n隐藏: %lu\n网络: %lu / 修改: %lu",
-            s.enabled ? @"开启" : @"关闭", minText, maxText, minVer, maxVer,
+    return [NSString stringWithFormat:@"状态：%@\n系统版本范围：%@ ～ %@\n已缓存版本商品：%lu\n\nUI Hook: %lu\n处理: %lu\n隐藏: %lu\n网络: %lu / 修改: %lu",
+            s.enabled ? @"开启" : @"关闭", minVer, maxVer,
+            (unsigned long)[ZZProductVisibility.shared cachedEntryCount],
             (unsigned long)ZZRuntimeFilteringHookCount(),
             (unsigned long)ZZFilterModelsProcessedCount(),
             (unsigned long)ZZFilterModelsHiddenCount(),
             (unsigned long)ZZNetworkInterceptedRequests(),
             (unsigned long)ZZNetworkModifiedResponses()];
+}
+
+- (void)showVersionResultsFrom:(UIViewController *)vc {
+    NSArray<NSDictionary *> *entries = [ZZProductVisibility.shared cachedEntriesMatchingCurrentVersionRange];
+    NSMutableString *message = [NSMutableString stringWithFormat:@"系统版本筛选结果：%lu 条\n\n", (unsigned long)entries.count];
+    NSUInteger limit = MIN((NSUInteger)12, entries.count);
+    for (NSUInteger i = 0; i < limit; i++) {
+        NSDictionary *d = entries[i];
+        NSString *title = @"商品";
+        for (NSString *key in @[@"title", @"name", @"itemTitle", @"goodsName"]) {
+            id v = d[key]; if ([v isKindOfClass:NSString.class] && [v length]) { title = v; break; }
+        }
+        NSString *version = ZZProductVersionFromDictionary(d);
+        NSString *pid = ZZProductIDFromInfo(d);
+        id price = d[@"price"] ?: d[@"sellPrice"] ?: d[@"salePrice"];
+        [message appendFormat:@"%lu. %@\n   iOS %@  ¥%@  ID:%@\n\n", (unsigned long)(i + 1), title, version.length ? version : @"未知", price ? [price description] : @"-", pid.length ? pid : @"-"];
+    }
+    if (entries.count > limit) [message appendFormat:@"仅显示前 %lu 条。", (unsigned long)limit];
+    if (!entries.count) [message appendString:@"当前没有已缓存且命中范围的商品。\n先让商品详情/列表网络请求完成，再点这里查看。"];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"系统版本筛选结果" message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"刷新" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) { [self showVersionResultsFrom:vc]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
+    [vc presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)presentSettingsFrom:(UIViewController *)vc {
@@ -397,16 +421,6 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
                                                                    message:[self summary]
                                                             preferredStyle:UIAlertControllerStyleAlert];
 
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
-        field.placeholder = @"最小数值（留空=不限）";
-        field.keyboardType = UIKeyboardTypeNumberPad;
-        if (s.minimumText > 0) field.text = [NSString stringWithFormat:@"%ld", (long)s.minimumText];
-    }];
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
-        field.placeholder = @"最大数值（留空=不限）";
-        field.keyboardType = UIKeyboardTypeNumberPad;
-        if (s.maximumText < NSIntegerMax) field.text = [NSString stringWithFormat:@"%ld", (long)s.maximumText];
-    }];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
         field.placeholder = @"最低版本（如 1.2.3）";
         field.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
@@ -419,6 +433,9 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     }];
 
     __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"查看系统版本结果" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+        [weakSelf showVersionResultsFrom:vc];
+    }]];
     [alert addAction:[UIAlertAction actionWithTitle:s.enabled ? @"关闭过滤" : @"开启过滤"
                                                    style:UIAlertActionStyleDefault
                                                  handler:^(__unused UIAlertAction *action) {
@@ -430,13 +447,11 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     [alert addAction:[UIAlertAction actionWithTitle:@"保存范围" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action;
         NSArray<UITextField *> *fields = alert.textFields;
-        NSString *minText = fields.count > 0 ? fields[0].text : @"";
-        NSString *maxText = fields.count > 1 ? fields[1].text : @"";
-        NSString *minVer = fields.count > 2 ? fields[2].text : @"";
-        NSString *maxVer = fields.count > 3 ? fields[3].text : @"";
+        NSString *minVer = fields.count > 0 ? fields[0].text : @"";
+        NSString *maxVer = fields.count > 1 ? fields[1].text : @"";
         ZZSettings *settings = ZZSettings.shared;
-        settings.minimumText = minText.integerValue;
-        settings.maximumText = maxText.length ? maxText.integerValue : NSIntegerMax;
+        settings.minimumText = 0;
+        settings.maximumText = NSIntegerMax;
         settings.minimumVersion = minVer ?: @"";
         settings.maximumVersion = maxVer ?: @"";
         [settings save];
