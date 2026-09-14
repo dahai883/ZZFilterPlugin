@@ -58,19 +58,19 @@ static NSArray<NSString *> *ZZReferenceDetailQueryNames(void) {
     // fields observed on the reference path. Do not forward list-only query
     // parameters wholesale.
     return @[
-        @"uid", @"previewToken", @"infoId", @"platform", @"requestType",
-        @"packageId", @"t", @"ip", @"token", @"orderId",
-        @"doubleTrackFineness", @"source", @"storeQrCode", @"searchFrom",
-        @"quickStart"
+        @"uid", @"previewToken", @"infoId", @"strInfoId", @"infoid",
+        @"platform", @"requestType", @"packageId", @"t", @"ip", @"token",
+        @"orderId", @"doubleTrackFineness", @"source", @"storeQrCode",
+        @"searchFrom", @"quickStart"
     ];
 }
 
-static void ZZAppendReferenceSourceQueryItems(NSMutableArray<NSURLQueryItem *> *items,
-                                              NSURLRequest *sourceRequest) {
-    if (!sourceRequest.URL) return;
+static void ZZAppendReferenceQueryItems(NSMutableArray<NSURLQueryItem *> *items,
+                                         NSMutableSet<NSString *> *seen,
+                                         NSURL *url) {
+    if (!url) return;
     NSSet<NSString *> *allowed = [NSSet setWithArray:ZZReferenceDetailQueryNames()];
-    NSMutableSet<NSString *> *seen = [NSMutableSet set];
-    for (NSURLQueryItem *item in [NSURLComponents componentsWithURL:sourceRequest.URL resolvingAgainstBaseURL:NO].queryItems ?: @[]) {
+    for (NSURLQueryItem *item in [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO].queryItems ?: @[]) {
         if (!item.name.length || !item.value.length) continue;
         NSString *lower = item.name.lowercaseString;
         if ([lower isEqualToString:@"productid"] || ![allowed containsObject:item.name]) continue;
@@ -79,6 +79,7 @@ static void ZZAppendReferenceSourceQueryItems(NSMutableArray<NSURLQueryItem *> *
         [items addObject:[NSURLQueryItem queryItemWithName:item.name value:item.value]];
     }
 }
+
 
 - (NSURLRequest *)detailRequestForProductID:(NSString *)pid
                                     jumpURL:(NSURL *)jumpURL
@@ -91,7 +92,8 @@ static void ZZAppendReferenceSourceQueryItems(NSMutableArray<NSURLQueryItem *> *
     NSString *jumpPath = jumpURL.path.lowercaseString ?: @"";
     BOOL jumpIsHTTP = [jumpScheme isEqualToString:@"http"] || [jumpScheme isEqualToString:@"https"];
     BOOL sameHost = [jumpHost hasSuffix:@"zhuanzhuan.com"] || [jumpHost hasSuffix:@"zhuanzhuan.com.cn"];
-    BOOL looksLikeDetail = [jumpPath containsString:@"/waresshow/moreinfo"] || [jumpPath containsString:@"moreinfo"];
+    BOOL looksLikeDetail = [jumpPath containsString:@"/waresshow/moreinfo"] || [jumpPath containsString:@"moreinfo"] ||
+                           [jumpPath containsString:@"detail"] || [jumpPath containsString:@"item"];
     if (jumpURL && jumpIsHTTP && sameHost && looksLikeDetail) targetURL = jumpURL;
 
     NSURLComponents *components = targetURL
@@ -99,12 +101,31 @@ static void ZZAppendReferenceSourceQueryItems(NSMutableArray<NSURLQueryItem *> *
         : [NSURLComponents componentsWithString:@"https://app.zhuanzhuan.com/zzopen/waresshow/moreInfo"];
     if (!components) return nil;
 
-    // The reference constructs a fresh query list: productId first, then only
-    // selected source-request context fields. This is intentionally stricter
-    // than copying the entire listing URL query.
-    NSMutableArray<NSURLQueryItem *> *items = [NSMutableArray arrayWithObject:
-        [NSURLQueryItem queryItemWithName:@"productId" value:pid]];
-    ZZAppendReferenceSourceQueryItems(items, sourceRequest);
+    // If the listing supplied a real HTTP(S) jump/detail URL, preserve its
+    // complete query string first. Those links can carry opaque context or
+    // server-generated parameters that must not be reconstructed or dropped.
+    // Only add productId/context values that are genuinely missing.
+    NSMutableArray<NSURLQueryItem *> *items = [NSMutableArray array];
+    NSMutableSet<NSString *> *seenQueryNames = [NSMutableSet set];
+    if (targetURL) {
+        for (NSURLQueryItem *item in [NSURLComponents componentsWithURL:targetURL resolvingAgainstBaseURL:NO].queryItems ?: @[]) {
+            if (!item.name.length) continue;
+            NSString *lower = item.name.lowercaseString;
+            if ([lower isEqualToString:@"productid"]) {
+                if (item.value.length) { [seenQueryNames addObject:lower]; [items addObject:item]; }
+                continue;
+            }
+            if (![seenQueryNames containsObject:lower]) {
+                [seenQueryNames addObject:lower];
+                [items addObject:item];
+            }
+        }
+    }
+    if (![seenQueryNames containsObject:@"productid"]) {
+        [items insertObject:[NSURLQueryItem queryItemWithName:@"productId" value:pid] atIndex:0];
+        [seenQueryNames addObject:@"productid"];
+    }
+    ZZAppendReferenceQueryItems(items, seenQueryNames, sourceRequest.URL);
     components.queryItems = items;
     NSURL *finalURL = components.URL;
     if (!finalURL) return nil;
@@ -114,15 +135,13 @@ static void ZZAppendReferenceSourceQueryItems(NSMutableArray<NSURLQueryItem *> *
     request.timeoutInterval = 5.0;
 
     NSDictionary *sourceHeaders = sourceRequest.allHTTPHeaderFields ?: @{};
-    // Match the reference header-copy boundary: transport headers and the
-    // request-signature/content headers are not blindly replayed. Cookie and
-    // Accept are supplied below from the current app cookie store.
+    // Preserve application-level headers from the real app request, including
+    // its normal auth/context fields. Only strip hop-by-hop/transport-managed
+    // headers that URLSession should generate itself.
     NSSet *deny = [NSSet setWithArray:@[
-        @"host", @"content-length", @"content-type", @"origin", @"referer",
-        @"zzreqsign", @"zzreqt", @"zzreqallparam", @"zzreqversion",
-        @"cookie", @"accept-encoding", @"connection", @"proxy-connection",
-        @"proxy-authenticate", @"proxy-authorization", @"te", @"trailer",
-        @"transfer-encoding", @"upgrade"
+        @"host", @"content-length", @"cookie", @"accept-encoding", @"connection",
+        @"proxy-connection", @"proxy-authenticate", @"proxy-authorization",
+        @"te", @"trailer", @"transfer-encoding", @"upgrade"
     ]];
     [sourceHeaders enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSString *value, BOOL *stop) {
         if (key.length && value.length && ![deny containsObject:key.lowercaseString]) {
