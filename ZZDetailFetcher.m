@@ -286,8 +286,11 @@ static void ZZAppendReferenceQueryItems(NSMutableArray<NSURLQueryItem *> *items,
                 return;
             }
 
-            // v34: GET is reaching the server but is rejected with HTTP 400.
-            // Try the same URL with two bounded body encodings before giving up.
+            // v35: the detail endpoint is rejecting the current GET with 405.
+            // Treat 400/405 as a request-shape mismatch and try bounded POST
+            // encodings before giving up. 405 specifically means the resource
+            // does not allow the method used for that request.
+
             __block NSData *bestData = nil;
             __block NSURLResponse *bestResponse = nil;
             __block NSError *bestError = nil;
@@ -353,7 +356,7 @@ static void ZZAppendReferenceQueryItems(NSMutableArray<NSURLQueryItem *> *items,
                 }
             }
 
-            if (!resolved && status == 400) {
+            if (!resolved && (status == 400 || status == 405)) {
                 NSMutableURLRequest *post = ZZMakeVariant(request, @"POST", ZZFormBodyFromURL(request.URL), @"application/x-www-form-urlencoded; charset=utf-8");
                 __block NSData *d = nil; __block NSURLResponse *r = nil; __block NSError *e = nil;
                 if (post) {
@@ -374,7 +377,7 @@ static void ZZAppendReferenceQueryItems(NSMutableArray<NSURLQueryItem *> *items,
                 }
             }
 
-            if (!resolved && status == 400) {
+            if (!resolved && (status == 400 || status == 405)) {
                 NSMutableURLRequest *postJSON = ZZMakeVariant(request, @"POST", ZZJSONBodyFromURL(request.URL), @"application/json; charset=utf-8");
                 __block NSData *d = nil; __block NSURLResponse *r = nil; __block NSError *e = nil;
                 if (postJSON) {
