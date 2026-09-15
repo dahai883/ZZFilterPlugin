@@ -67,12 +67,18 @@ static NSMutableURLRequest *ZZMakeVariant(NSURLRequest *base, NSString *method, 
 static NSUInteger ZZDetailHTTPResponseCount;
 static NSUInteger ZZDetailHTTP2xxCount;
 static NSUInteger ZZDetailHTTPFailureCount;
+static NSUInteger ZZDetailGETCount;
+static NSUInteger ZZDetailPOSTFormCount;
+static NSUInteger ZZDetailPOSTJSONCount;
 static NSInteger ZZDetailLastStatusCode;
 
 NSUInteger ZZDetailHTTPResponses(void) { @synchronized (ZZDetailFetcher.class) { return ZZDetailHTTPResponseCount; } }
 NSUInteger ZZDetailHTTP2xxResponses(void) { @synchronized (ZZDetailFetcher.class) { return ZZDetailHTTP2xxCount; } }
 NSUInteger ZZDetailHTTPFailureResponses(void) { @synchronized (ZZDetailFetcher.class) { return ZZDetailHTTPFailureCount; } }
 NSInteger ZZDetailLastHTTPStatus(void) { @synchronized (ZZDetailFetcher.class) { return ZZDetailLastStatusCode; } }
+NSUInteger ZZDetailGETRequests(void) { @synchronized (ZZDetailFetcher.class) { return ZZDetailGETCount; } }
+NSUInteger ZZDetailPOSTFormRequests(void) { @synchronized (ZZDetailFetcher.class) { return ZZDetailPOSTFormCount; } }
+NSUInteger ZZDetailPOSTJSONRequests(void) { @synchronized (ZZDetailFetcher.class) { return ZZDetailPOSTJSONCount; } }
 
 static NSString *ZZQueryValue(NSURL *url, NSArray<NSString *> *names) {
     if (!url) return @"";
@@ -125,8 +131,12 @@ static void ZZAppendReferenceQueryItems(NSMutableArray<NSURLQueryItem *> *items,
     BOOL jumpIsHTTP = [jumpScheme isEqualToString:@"http"] || [jumpScheme isEqualToString:@"https"];
     BOOL sameHost = [jumpHost hasSuffix:@"zhuanzhuan.com"] || [jumpHost hasSuffix:@"zhuanzhuan.com.cn"];
     BOOL looksLikeDetail = [jumpPath containsString:@"/waresshow/moreinfo"] || [jumpPath containsString:@"moreinfo"] ||
-                           [jumpPath containsString:@"detail"] || [jumpPath containsString:@"item"];
-    if (jumpURL && jumpIsHTTP && sameHost && looksLikeDetail) targetURL = jumpURL;
+                           [jumpPath containsString:@"detail"] || [jumpPath containsString:@"item"] ||
+                           [jumpPath containsString:@"goods"] || [jumpPath containsString:@"product"];
+    // v36: if the list gives us a same-host HTTP(S) jump URL, prefer it even
+    // when its path is opaque. The app can use short/deep-link paths that do
+    // not contain the word "detail" while still carrying the required context.
+    if (jumpURL && jumpIsHTTP && sameHost) targetURL = jumpURL;
 
     NSURLComponents *components = targetURL
         ? [NSURLComponents componentsWithURL:targetURL resolvingAgainstBaseURL:NO]
@@ -316,8 +326,17 @@ static void ZZAppendReferenceQueryItems(NSMutableArray<NSURLQueryItem *> *items,
                         if (t.length > 160) t = [t substringToIndex:160];
                         preview = t ?: @"";
                     }
-                    ZZFilterDebugWrite(@"[ZZFilterDetail] method=%@ status=%ld type=%@ bytes=%lu body=%@ url=%@",
-                                       req.HTTPMethod ?: @"?", (long)http.statusCode, ct,
+                    NSString *allow = http.allHeaderFields[@"Allow"] ?: http.allHeaderFields[@"allow"] ?: @"";
+                    @synchronized (ZZDetailFetcher.class) {
+                        if ([req.HTTPMethod caseInsensitiveCompare:@"GET"] == NSOrderedSame) ZZDetailGETCount += 1;
+                        else if ([req.HTTPMethod caseInsensitiveCompare:@"POST"] == NSOrderedSame) {
+                            NSString *ctype = [req valueForHTTPHeaderField:@"Content-Type"] ?: @"";
+                            if ([ctype.lowercaseString containsString:@"application/json"]) ZZDetailPOSTJSONCount += 1;
+                            else ZZDetailPOSTFormCount += 1;
+                        }
+                    }
+                    ZZFilterDebugWrite(@"[ZZFilterDetail] method=%@ status=%ld allow=%@ type=%@ bytes=%lu body=%@ url=%@",
+                                       req.HTTPMethod ?: @"?", (long)http.statusCode, allow, ct,
                                        (unsigned long)data.length, preview, req.URL.absoluteString ?: @"");
                 } else if (error) {
                     ZZFilterDebugWrite(@"[ZZFilterDetail] method=%@ transport-error domain=%@ code=%ld desc=%@ url=%@",
@@ -385,6 +404,64 @@ static void ZZAppendReferenceQueryItems(NSMutableArray<NSURLQueryItem *> *items,
                     NSURLSessionDataTask *t = [self.session dataTaskWithRequest:postJSON completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) { d=data; r=response; e=error; dispatch_semaphore_signal(w); }];
                     [t resume]; dispatch_semaphore_wait(w, DISPATCH_TIME_FOREVER);
                     recordResponse(postJSON, d, r, e);
+                    status = [r isKindOfClass:NSHTTPURLResponse.class] ? [(NSHTTPURLResponse *)r statusCode] : 0;
+                    if (status >= 200 && status <= 299) {
+                        NSDictionary *entry = [self entryFromData:d response:r error:e];
+                        if (entry.count) {
+                            NSMutableDictionary *candidate = [entry mutableCopy];
+                            if (!ZZProductIDFromInfo(candidate).length) candidate[@"productId"] = pid;
+                            NSString *version = ZZProductVersionFromDictionary(candidate);
+                            if (version.length) { candidate[@"zzSystemVersion"] = version; @synchronized (entriesLock) { [entries addObject:candidate.copy]; } resolved = YES; }
+                        }
+                    }
+                }
+            }
+
+            // v36: some gateways reject POST when query parameters remain on the
+            // URL and require the request payload to be body-only. Retry the two
+            // bounded POST encodings once with the query stripped. This is still
+            // limited to the detail endpoint/jump URL and the 12-item batch.
+            if (!resolved && (status == 400 || status == 405)) {
+                NSURLComponents *bodyOnlyComponents = [NSURLComponents componentsWithURL:request.URL resolvingAgainstBaseURL:NO];
+                bodyOnlyComponents.query = nil;
+                NSMutableURLRequest *postBodyOnly = [request mutableCopy];
+                postBodyOnly.URL = bodyOnlyComponents.URL;
+                postBodyOnly.HTTPMethod = @"POST";
+                postBodyOnly.HTTPBody = ZZFormBodyFromURL(request.URL);
+                [postBodyOnly setValue:@"application/x-www-form-urlencoded; charset=utf-8" forHTTPHeaderField:@"Content-Type"];
+                __block NSData *d = nil; __block NSURLResponse *r = nil; __block NSError *e = nil;
+                if (postBodyOnly.URL) {
+                    dispatch_semaphore_t w = dispatch_semaphore_create(0);
+                    NSURLSessionDataTask *t = [self.session dataTaskWithRequest:postBodyOnly completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) { d=data; r=response; e=error; dispatch_semaphore_signal(w); }];
+                    [t resume]; dispatch_semaphore_wait(w, DISPATCH_TIME_FOREVER);
+                    recordResponse(postBodyOnly, d, r, e);
+                    status = [r isKindOfClass:NSHTTPURLResponse.class] ? [(NSHTTPURLResponse *)r statusCode] : 0;
+                    if (status >= 200 && status <= 299) {
+                        NSDictionary *entry = [self entryFromData:d response:r error:e];
+                        if (entry.count) {
+                            NSMutableDictionary *candidate = [entry mutableCopy];
+                            if (!ZZProductIDFromInfo(candidate).length) candidate[@"productId"] = pid;
+                            NSString *version = ZZProductVersionFromDictionary(candidate);
+                            if (version.length) { candidate[@"zzSystemVersion"] = version; @synchronized (entriesLock) { [entries addObject:candidate.copy]; } resolved = YES; }
+                        }
+                    }
+                }
+            }
+
+            if (!resolved && (status == 400 || status == 405)) {
+                NSURLComponents *bodyOnlyComponents = [NSURLComponents componentsWithURL:request.URL resolvingAgainstBaseURL:NO];
+                bodyOnlyComponents.query = nil;
+                NSMutableURLRequest *postJSONBodyOnly = [request mutableCopy];
+                postJSONBodyOnly.URL = bodyOnlyComponents.URL;
+                postJSONBodyOnly.HTTPMethod = @"POST";
+                postJSONBodyOnly.HTTPBody = ZZJSONBodyFromURL(request.URL);
+                [postJSONBodyOnly setValue:@"application/json; charset=utf-8" forHTTPHeaderField:@"Content-Type"];
+                __block NSData *d = nil; __block NSURLResponse *r = nil; __block NSError *e = nil;
+                if (postJSONBodyOnly.URL) {
+                    dispatch_semaphore_t w = dispatch_semaphore_create(0);
+                    NSURLSessionDataTask *t = [self.session dataTaskWithRequest:postJSONBodyOnly completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) { d=data; r=response; e=error; dispatch_semaphore_signal(w); }];
+                    [t resume]; dispatch_semaphore_wait(w, DISPATCH_TIME_FOREVER);
+                    recordResponse(postJSONBodyOnly, d, r, e);
                     status = [r isKindOfClass:NSHTTPURLResponse.class] ? [(NSHTTPURLResponse *)r statusCode] : 0;
                     if (status >= 200 && status <= 299) {
                         NSDictionary *entry = [self entryFromData:d response:r error:e];

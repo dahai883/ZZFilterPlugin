@@ -327,13 +327,17 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     NSUInteger detail2xx = ZZDetailHTTP2xxResponses();
     NSUInteger detailFailures = ZZDetailHTTPFailureResponses();
     NSInteger detailLastStatus = ZZDetailLastHTTPStatus();
+    NSUInteger detailGET = ZZDetailGETRequests();
+    NSUInteger detailPOSTForm = ZZDetailPOSTFormRequests();
+    NSUInteger detailPOSTJSON = ZZDetailPOSTJSONRequests();
     return [NSString stringWithFormat:
-            @"插件：已加载\nUI Hook：%lu\nUI 调用：%lu\n处理商品：%lu\n隐藏商品：%lu\n网络拦截：%lu\n修改响应：%lu\n详情预取：%lu\n详情响应：%lu（2xx：%lu，失败：%lu）\n最后HTTP状态：%ld\n详情命中：%lu",
+            @"插件：已加载\nUI Hook：%lu\nUI 调用：%lu\n处理商品：%lu\n隐藏商品：%lu\n网络拦截：%lu\n修改响应：%lu\n详情预取：%lu\n详情响应：%lu（2xx：%lu，失败：%lu）\n详情请求：GET %lu / POST表单 %lu / POST JSON %lu\n最后HTTP状态：%ld\n详情命中：%lu",
             (unsigned long)hooks, (unsigned long)calls,
             (unsigned long)processed, (unsigned long)hidden,
             (unsigned long)network, (unsigned long)modified,
             (unsigned long)detailRequests, (unsigned long)detailResponses,
             (unsigned long)detail2xx, (unsigned long)detailFailures,
+            (unsigned long)detailGET, (unsigned long)detailPOSTForm, (unsigned long)detailPOSTJSON,
             (long)detailLastStatus, (unsigned long)detailEntries];
 }
 
