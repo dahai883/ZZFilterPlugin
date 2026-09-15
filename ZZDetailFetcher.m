@@ -40,6 +40,17 @@ static NSMutableURLRequest *ZZMakeVariant(NSURLRequest *base, NSString *method, 
     return r;
 }
 
+static NSURL *ZZAlternateDetailURL(NSURL *url, NSUInteger index) {
+    if (!url || index > 2) return nil;
+    NSURLComponents *c = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
+    if (!c) return nil;
+    if (index == 0) return url;
+    if (index == 1) c.path = @"/zzopen/waresshow/moreinfo";
+    else c.path = @"/waresshow/moreinfo";
+    return c.URL;
+}
+
+
 @implementation ZZDetailFetcher
 
 + (instancetype)shared {
@@ -90,6 +101,31 @@ static NSString *ZZQueryValue(NSURL *url, NSArray<NSString *> *names) {
     return @"";
 }
 
+static NSDictionary<NSString *, NSString *> *ZZStringParamsFromData(NSData *data) {
+    if (!data.length) return @{};
+    id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+    if ([obj isKindOfClass:NSDictionary.class]) {
+        NSMutableDictionary *out = [NSMutableDictionary dictionary];
+        for (id key in (NSDictionary *)obj) {
+            id value = ((NSDictionary *)obj)[key];
+            if ([key isKindOfClass:NSString.class] && [value respondsToSelector:@selector(stringValue)]) {
+                NSString *sv = [value isKindOfClass:NSString.class] ? value : [value stringValue];
+                if (sv.length) out[key] = sv;
+            }
+        }
+        return out.copy;
+    }
+    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (!text.length) return @{};
+    NSURLComponents *components = [NSURLComponents componentsWithString:[@"https://zz.local/?" stringByAppendingString:text]];
+    if (!components.queryItems.count) return @{};
+    NSMutableDictionary *out = [NSMutableDictionary dictionary];
+    for (NSURLQueryItem *item in components.queryItems) {
+        if (item.name.length && item.value.length) out[item.name] = item.value;
+    }
+    return out.copy;
+}
+
 static NSArray<NSString *> *ZZReferenceDetailQueryNames(void) {
     // Keep the detail request's query shape aligned with the app's normal
     // detail-request context: productId plus the small set of source-context
@@ -116,6 +152,50 @@ static void ZZAppendReferenceQueryItems(NSMutableArray<NSURLQueryItem *> *items,
         [seen addObject:lower];
         [items addObject:[NSURLQueryItem queryItemWithName:item.name value:item.value]];
     }
+}
+
+static void ZZAppendReferenceQueryItemsFromDictionary(NSMutableArray<NSURLQueryItem *> *items,
+                                                       NSMutableSet<NSString *> *seen,
+                                                       NSDictionary<NSString *,NSString *> *params) {
+    if (!params.count) return;
+    NSSet<NSString *> *allowed = [NSSet setWithArray:ZZReferenceDetailQueryNames()];
+    for (NSString *name in params) {
+        NSString *value = params[name];
+        if (!name.length || !value.length) continue;
+        NSString *lower = name.lowercaseString;
+        if ([lower isEqualToString:@"productid"] || ![allowed containsObject:name]) continue;
+        if ([seen containsObject:lower]) continue;
+        [seen addObject:lower];
+        [items addObject:[NSURLQueryItem queryItemWithName:name value:value]];
+    }
+}
+
+static NSDictionary<NSString *,NSString *> *ZZSourceRequestParams(NSURLRequest *sourceRequest) {
+    if (!sourceRequest) return @{};
+    NSMutableDictionary *params = [NSMutableDictionary dictionary];
+    NSURLComponents *uc = [NSURLComponents componentsWithURL:sourceRequest.URL resolvingAgainstBaseURL:NO];
+    for (NSURLQueryItem *item in uc.queryItems ?: @[]) {
+        if (item.name.length && item.value.length) params[item.name] = item.value;
+    }
+    NSString *contentType = [sourceRequest valueForHTTPHeaderField:@"Content-Type"].lowercaseString ?: @"";
+    if (sourceRequest.HTTPBody.length) {
+        NSDictionary *body = ZZStringParamsFromData(sourceRequest.HTTPBody);
+        [body enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSString *value, BOOL *stop) { params[key] = value; (void)stop; }];
+    }
+    // zzreqallparam is an app-level request-context header seen on the normal
+    // search traffic. It is commonly URL-encoded JSON/form data; use it only
+    // as an additional source of the small reference query field set.
+    NSString *allParam = [sourceRequest valueForHTTPHeaderField:@"zzreqallparam"];
+    if (allParam.length) {
+        NSString *decoded = [allParam stringByRemovingPercentEncoding] ?: allParam;
+        NSData *d = [decoded dataUsingEncoding:NSUTF8StringEncoding];
+        NSDictionary *headerParams = ZZStringParamsFromData(d);
+        [headerParams enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSString *value, BOOL *stop) { params[key] = value; (void)stop; }];
+        NSURLComponents *hc = [NSURLComponents componentsWithString:[@"https://zz.local/?" stringByAppendingString:decoded]];
+        for (NSURLQueryItem *item in hc.queryItems ?: @[]) if (item.name.length && item.value.length) params[item.name] = item.value;
+    }
+    (void)contentType;
+    return params.copy;
 }
 
 
@@ -167,7 +247,11 @@ static void ZZAppendReferenceQueryItems(NSMutableArray<NSURLQueryItem *> *items,
         [items insertObject:[NSURLQueryItem queryItemWithName:@"productId" value:pid] atIndex:0];
         [seenQueryNames addObject:@"productid"];
     }
+    // v37: the search request can be POST-based. In that case uid/infoId/etc.
+    // may live in HTTPBody or zzreqallparam instead of URL.query. Carry only
+    // the reference detail-context keys forward.
     ZZAppendReferenceQueryItems(items, seenQueryNames, sourceRequest.URL);
+    ZZAppendReferenceQueryItemsFromDictionary(items, seenQueryNames, ZZSourceRequestParams(sourceRequest));
     components.queryItems = items;
     NSURL *finalURL = components.URL;
     if (!finalURL) return nil;
@@ -372,6 +456,36 @@ static void ZZAppendReferenceQueryItems(NSMutableArray<NSURLQueryItem *> *items,
                     if (!text.length) text = [[NSString alloc] initWithData:getData encoding:NSASCIIStringEncoding];
                     NSString *version = ZZProductVersionFromObject(text);
                     if (version.length) { NSDictionary *candidate = @{@"productId":pid,@"detailText":text,@"zzSystemVersion":version}; @synchronized (entriesLock) { [entries addObject:candidate]; } resolved = YES; }
+                }
+            }
+
+            // v37: the reference binary contains both /zzopen/waresshow/moreInfo
+            // and /waresshow/moreinfo path forms. If the canonical path rejects
+            // GET with 400/405, try the two observed path spellings before changing
+            // the HTTP method. This stays bounded to two extra requests per item.
+            if (!resolved && (status == 400 || status == 405)) {
+                for (NSUInteger altIndex = 1; altIndex <= 2 && !resolved; altIndex++) {
+                    NSURL *altURL = ZZAlternateDetailURL(request.URL, altIndex);
+                    if (!altURL || [altURL.absoluteString isEqualToString:request.URL.absoluteString]) continue;
+                    NSMutableURLRequest *alt = [request mutableCopy];
+                    alt.URL = altURL;
+                    alt.HTTPMethod = @"GET";
+                    alt.HTTPBody = nil;
+                    __block NSData *d = nil; __block NSURLResponse *r = nil; __block NSError *e = nil;
+                    dispatch_semaphore_t w = dispatch_semaphore_create(0);
+                    NSURLSessionDataTask *t = [self.session dataTaskWithRequest:alt completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) { d=data; r=response; e=error; dispatch_semaphore_signal(w); }];
+                    [t resume]; dispatch_semaphore_wait(w, DISPATCH_TIME_FOREVER);
+                    recordResponse(alt, d, r, e);
+                    status = [r isKindOfClass:NSHTTPURLResponse.class] ? [(NSHTTPURLResponse *)r statusCode] : 0;
+                    if (status >= 200 && status <= 299) {
+                        NSDictionary *entry = [self entryFromData:d response:r error:e];
+                        if (entry.count) {
+                            NSMutableDictionary *candidate = [entry mutableCopy];
+                            if (!ZZProductIDFromInfo(candidate).length) candidate[@"productId"] = pid;
+                            NSString *version = ZZProductVersionFromDictionary(candidate);
+                            if (version.length) { candidate[@"zzSystemVersion"] = version; @synchronized (entriesLock) { [entries addObject:candidate.copy]; } resolved = YES; }
+                        }
+                    }
                 }
             }
 
