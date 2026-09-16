@@ -11,9 +11,14 @@ static NSUInteger gDetailCapturedEntries;
 static NSUInteger gObservedDetailRequests;
 static NSObject *gDetailCaptureLock;
 static NSObject *gObservedRequestLock;
+static __thread BOOL gZZInsideObserverRequest = NO;
+
+static void ZZEnsureDetailCaptureLock(void);
+static void ZZEnsureObservedRequestLock(void);
 
 NSUInteger ZZDetailCapturedEntries(void) {
-    @synchronized (gDetailCaptureLock ?: [NSObject class]) { return gDetailCapturedEntries; }
+    ZZEnsureDetailCaptureLock();
+    @synchronized (gDetailCaptureLock) { return gDetailCapturedEntries; }
 }
 
 static void ZZEnsureDetailCaptureLock(void) {
@@ -148,28 +153,40 @@ static NSURLSession *ZZObserverSession(void) {
 
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, SEL _cmd, NSURLRequest *request, void (^completion)(NSData *, NSURLResponse *, NSError *)) {
     (void)_cmd;
+    if (!request) return [(NSURLSession *)self zz_filter_dataTaskWithRequest_completion:request completionHandler:completion];
     NSURLSessionDataTask *task = [(NSURLSession *)self zz_filter_dataTaskWithRequest_completion:request completionHandler:completion];
-    if (ZZLooksLikeDetailRequest(request)) {
+    if (!gZZInsideObserverRequest && ZZLooksLikeDetailRequest(request)) {
+        ZZEnsureObservedRequestLock();
         @synchronized (gObservedRequestLock) { if (gObservedDetailRequests < 24) gObservedDetailRequests += 1; else return task; }
         NSURLRequest *copy = request.copy;
         NSURLSession *observer = ZZObserverSession();
-        [observer zz_filter_dataTaskWithRequest_completion:copy completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        BOOL previousGuard = gZZInsideObserverRequest;
+        gZZInsideObserverRequest = YES;
+        NSURLSessionDataTask *observerTask = [observer zz_filter_dataTaskWithRequest_completion:copy completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
             ZZObserveDetailResponse(copy, data, response, error);
-        }).resume;
+        }];
+        gZZInsideObserverRequest = previousGuard;
+        [observerTask resume];
     }
     return task;
 }
 
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest(id self, SEL _cmd, NSURLRequest *request) {
     (void)_cmd;
+    if (!request) return [(NSURLSession *)self zz_filter_dataTaskWithRequest:request];
     NSURLSessionDataTask *task = [(NSURLSession *)self zz_filter_dataTaskWithRequest:request];
-    if (ZZLooksLikeDetailRequest(request)) {
+    if (!gZZInsideObserverRequest && ZZLooksLikeDetailRequest(request)) {
+        ZZEnsureObservedRequestLock();
         @synchronized (gObservedRequestLock) { if (gObservedDetailRequests < 24) gObservedDetailRequests += 1; else return task; }
         NSURLRequest *copy = request.copy;
         NSURLSession *observer = ZZObserverSession();
-        [observer zz_filter_dataTaskWithRequest_completion:copy completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        BOOL previousGuard = gZZInsideObserverRequest;
+        gZZInsideObserverRequest = YES;
+        NSURLSessionDataTask *observerTask = [observer zz_filter_dataTaskWithRequest_completion:copy completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
             ZZObserveDetailResponse(copy, data, response, error);
-        }).resume;
+        }];
+        gZZInsideObserverRequest = previousGuard;
+        [observerTask resume];
     }
     return task;
 }
