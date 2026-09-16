@@ -12,6 +12,8 @@ static NSUInteger gObservedDetailRequests;
 static NSObject *gDetailCaptureLock;
 static NSObject *gObservedRequestLock;
 static __thread BOOL gZZInsideObserverRequest = NO;
+static const void *kZZObserverTaskKey = &kZZObserverTaskKey;
+static const void *kZZObservedTaskKey = &kZZObservedTaskKey;
 
 static void ZZEnsureDetailCaptureLock(void);
 static void ZZEnsureObservedRequestLock(void);
@@ -19,6 +21,11 @@ static void ZZEnsureObservedRequestLock(void);
 NSUInteger ZZDetailCapturedEntries(void) {
     ZZEnsureDetailCaptureLock();
     @synchronized (gDetailCaptureLock) { return gDetailCapturedEntries; }
+}
+
+NSUInteger ZZObservedDetailRequests(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailRequests; }
 }
 
 static void ZZEnsureDetailCaptureLock(void) {
@@ -134,6 +141,49 @@ static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLRe
 }
 
 
+static void ZZStartObserverForRequest(NSURLRequest *request) {
+    if (!request || gZZInsideObserverRequest || !ZZLooksLikeDetailRequest(request)) return;
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) {
+        if (gObservedDetailRequests >= 24) return;
+        gObservedDetailRequests += 1;
+    }
+    NSURLRequest *copy = request.copy;
+    NSURLSession *observer = ZZObserverSession();
+    BOOL previousGuard = gZZInsideObserverRequest;
+    gZZInsideObserverRequest = YES;
+    NSURLSessionDataTask *observerTask = [observer zz_filter_dataTaskWithRequest_completion:copy completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        ZZObserveDetailResponse(copy, data, response, error);
+    }];
+    gZZInsideObserverRequest = previousGuard;
+    if (observerTask) {
+        objc_setAssociatedObject(observerTask, kZZObserverTaskKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [observerTask resume];
+    }
+}
+
+static BOOL ZZTaskWasObserved(NSURLSessionDataTask *task) {
+    return objc_getAssociatedObject(task, kZZObservedTaskKey) != nil;
+}
+
+static void ZZMarkTaskObserved(NSURLSessionDataTask *task) {
+    if (task) objc_setAssociatedObject(task, kZZObservedTaskKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+static BOOL ZZIsObserverTask(NSURLSessionTask *task) {
+    return task && objc_getAssociatedObject(task, kZZObserverTaskKey) != nil;
+}
+
+static void ZZInspectTaskForDetail(NSURLSessionDataTask *task) {
+    if (!task || ZZIsObserverTask(task) || ZZTaskWasObserved(task)) return;
+    NSURLRequest *request = task.originalRequest ?: task.currentRequest;
+    if (!request || !ZZLooksLikeDetailRequest(request)) return;
+    ZZMarkTaskObserved(task);
+    ZZFilterDebugWrite(@"[ZZDetailObserver] task-created method=%@ url=%@ pid=%@", request.HTTPMethod ?: @"GET", request.URL.absoluteString ?: @"", ZZProductIDFromRequest(request));
+    ZZStartObserverForRequest(request);
+}
+
+
 @interface NSURLSession (ZZFilterObserveForward)
 - (NSURLSessionDataTask *)zz_filter_dataTaskWithRequest:(NSURLRequest *)request;
 - (NSURLSessionDataTask *)zz_filter_dataTaskWithRequest_completion:(NSURLRequest *)request completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler;
@@ -155,19 +205,7 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, S
     (void)_cmd;
     if (!request) return [(NSURLSession *)self zz_filter_dataTaskWithRequest_completion:request completionHandler:completion];
     NSURLSessionDataTask *task = [(NSURLSession *)self zz_filter_dataTaskWithRequest_completion:request completionHandler:completion];
-    if (!gZZInsideObserverRequest && ZZLooksLikeDetailRequest(request)) {
-        ZZEnsureObservedRequestLock();
-        @synchronized (gObservedRequestLock) { if (gObservedDetailRequests < 24) gObservedDetailRequests += 1; else return task; }
-        NSURLRequest *copy = request.copy;
-        NSURLSession *observer = ZZObserverSession();
-        BOOL previousGuard = gZZInsideObserverRequest;
-        gZZInsideObserverRequest = YES;
-        NSURLSessionDataTask *observerTask = [observer zz_filter_dataTaskWithRequest_completion:copy completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-            ZZObserveDetailResponse(copy, data, response, error);
-        }];
-        gZZInsideObserverRequest = previousGuard;
-        [observerTask resume];
-    }
+    if (!gZZInsideObserverRequest && ZZLooksLikeDetailRequest(request)) ZZStartObserverForRequest(request);
     return task;
 }
 
@@ -175,21 +213,24 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest(id self, SEL _cmd, NS
     (void)_cmd;
     if (!request) return [(NSURLSession *)self zz_filter_dataTaskWithRequest:request];
     NSURLSessionDataTask *task = [(NSURLSession *)self zz_filter_dataTaskWithRequest:request];
-    if (!gZZInsideObserverRequest && ZZLooksLikeDetailRequest(request)) {
-        ZZEnsureObservedRequestLock();
-        @synchronized (gObservedRequestLock) { if (gObservedDetailRequests < 24) gObservedDetailRequests += 1; else return task; }
-        NSURLRequest *copy = request.copy;
-        NSURLSession *observer = ZZObserverSession();
-        BOOL previousGuard = gZZInsideObserverRequest;
-        gZZInsideObserverRequest = YES;
-        NSURLSessionDataTask *observerTask = [observer zz_filter_dataTaskWithRequest_completion:copy completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-            ZZObserveDetailResponse(copy, data, response, error);
-        }];
-        gZZInsideObserverRequest = previousGuard;
-        [observerTask resume];
-    }
+    if (!gZZInsideObserverRequest && ZZLooksLikeDetailRequest(request)) ZZStartObserverForRequest(request);
     return task;
 }
+
+
+@interface NSURLSessionTask (ZZFilterResumeObserve)
+- (void)zz_filter_resume;
+@end
+
+@implementation NSURLSessionTask (ZZFilterResumeObserve)
+- (void)zz_filter_resume {
+    BOOL isObserver = ZZIsObserverTask(self);
+    [self zz_filter_resume];
+    if (!isObserver && [self isKindOfClass:NSURLSessionDataTask.class]) {
+        ZZInspectTaskForDetail((NSURLSessionDataTask *)self);
+    }
+}
+@end
 
 
 static void ZZEnsureCookieRegistry(void) {
@@ -299,6 +340,11 @@ void ZZInstallNetworkInterception(void) {
         if (dataTaskWithCompletion && replacementCompletion) {
             method_exchangeImplementations(dataTaskWithCompletion, replacementCompletion);
         }
+        Class taskCls = [NSURLSessionTask class];
+        Method originalResume = class_getInstanceMethod(taskCls, @selector(resume));
+        Method replacementResume = class_getInstanceMethod(taskCls, @selector(zz_filter_resume));
+        if (originalResume && replacementResume) method_exchangeImplementations(originalResume, replacementResume);
+
         Method dataTaskSimple = class_getInstanceMethod(sessionCls, @selector(dataTaskWithRequest:));
         Method replacementSimple = class_getInstanceMethod(sessionCls, @selector(zz_filter_dataTaskWithRequest:));
         if (dataTaskSimple && replacementSimple) {

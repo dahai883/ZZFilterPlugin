@@ -1,23 +1,14 @@
-# ZZFilterPlugin v41
+# ZZFilterPlugin v43
 
-独立的系统版本筛选与网络详情数据增强测试版本。
+独立的系统版本筛选与详情数据增强测试版本。
 
-v37 针对 v36 中详情请求全部返回 HTTP 405 的情况，增加：
-- 从列表请求的 URL、HTTP Body、`zzreqallparam` 提取受限的详情上下文字段；
-- 保留参考实现中观察到的 `/zzopen/waresshow/moreInfo`、`/zzopen/waresshow/moreinfo`、`/waresshow/moreinfo` 三种路径形态；
-- 先尝试备用 GET 路径，再按 400/405 触发 POST 表单/JSON 以及 Body-only 变体；
-- 记录实际请求方法、HTTP 状态、`Allow` 响应头和响应体预览；
-- 详情请求仍限制为每批最多 12 个商品、并发 3，避免高 CPU/发热。
+本版重点：不再只依赖 `NSURLSession` 的 dataTask 创建方法观察详情请求，而是额外在 `NSURLSessionTask resume` 边界检查实际任务的 originalRequest/currentRequest。仅对同域、疑似详情请求进行有限观察，并对观察任务做关联标记，避免递归。
 
-本版本不修改激活、授权、签名或许可状态。
+诊断新增：
+- `详情观察`：实际观察到的疑似详情任务数量；
+- 调试日志记录实际 method / URL / productId；
+- 保留 v42 的 24 个观察任务上限与受限详情预取。
 
+打包前会清理 `__pycache__`、`.pyc` 等 Python 缓存，并运行源码结构检查。
 
-v41: 增加对转转 App 自身详情请求的只读监听与版本缓存；详情页原始响应不改写。
-
-
-### v41
-在不修改转转原始详情响应的前提下，额外观察 NSURLSession 实际发出的同域详情请求，并使用原请求的 URL、Header、HTTPBody 原样复制一个只读观察请求；成功 2xx JSON 响应会尝试提取商品系统版本并写入缓存。观察请求有数量上限，避免造成额外网络/CPU 压力。
-
-
-## v41 crash fix
-The v40 crash was traced to the NSURLSession completion-handler swizzle: the replacement selector was declared as `@selector(zz_filter_dataTaskWithRequest_completion:)`, but the actual method has two selector components (`...:completionHandler:`). Therefore the replacement Method was nil, the original IMP pointer stayed nil, and the wrapper later jumped to PC 0. v41 corrects the selector and avoids direct calls through raw IMP function pointers, using the alternate swizzled selector to reach the original implementation.
+本项目为独立的授权测试/筛选实现，不修改激活、授权、签名或许可状态。
