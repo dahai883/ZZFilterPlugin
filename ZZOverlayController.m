@@ -4,6 +4,7 @@
 #import "ZZProductVisibility.h"
 #import "ZZFilterURLProtocol.h"
 #import "ZZDetailFetcher.h"
+#import "ZZNetworkInterception.h"
 #import "ZZProductFilter.h"
 // Keep debug logging compatible with the iOS 17.5 SDK.
 // os_log's format argument must be a compile-time constant; forwarding a
@@ -322,7 +323,7 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     NSUInteger network = ZZNetworkInterceptedRequests();
     NSUInteger modified = ZZNetworkModifiedResponses();
     NSUInteger detailRequests = ZZDetailPrefetchRequests();
-    NSUInteger detailEntries = ZZDetailPrefetchEntries();
+    NSUInteger detailEntries = ZZDetailPrefetchEntries() + ZZDetailCapturedEntries();
     NSUInteger detailResponses = ZZDetailHTTPResponses();
     NSUInteger detail2xx = ZZDetailHTTP2xxResponses();
     NSUInteger detailFailures = ZZDetailHTTPFailureResponses();
