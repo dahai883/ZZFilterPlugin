@@ -10,6 +10,7 @@ static NSObject *gCookieLock;
 static NSUInteger gDetailCapturedEntries;
 static NSUInteger gObservedDetailRequests;
 static NSObject *gDetailCaptureLock;
+static NSObject *gObservedRequestLock;
 
 NSUInteger ZZDetailCapturedEntries(void) {
     @synchronized (gDetailCaptureLock ?: [NSObject class]) { return gDetailCapturedEntries; }
@@ -18,6 +19,11 @@ NSUInteger ZZDetailCapturedEntries(void) {
 static void ZZEnsureDetailCaptureLock(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{ gDetailCaptureLock = [NSObject new]; });
+}
+
+static void ZZEnsureObservedRequestLock(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ gObservedRequestLock = [NSObject new]; });
 }
 
 static NSString *ZZRequestValue(NSURLRequest *request, NSArray<NSString *> *names) {
@@ -138,9 +144,10 @@ static NSURLSession *ZZObserverSession(void) {
 }
 
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, SEL _cmd, NSURLRequest *request, void (^completion)(NSData *, NSURLResponse *, NSError *)) {
+    if (!gOrigDataTaskWithCompletion) return nil;
     NSURLSessionDataTask *task = gOrigDataTaskWithCompletion(self, _cmd, request, completion);
     if (ZZLooksLikeDetailRequest(request)) {
-        @synchronized ([ZZNetworkInterception class]) { if (gObservedDetailRequests < 24) gObservedDetailRequests += 1; else return task; }
+        @synchronized (gObservedRequestLock) { if (gObservedDetailRequests < 24) gObservedDetailRequests += 1; else return task; }
         NSURLRequest *copy = request.copy;
         NSURLSession *observer = ZZObserverSession();
         gOrigDataTaskWithCompletion(observer, @selector(dataTaskWithRequest:completionHandler:), copy, ^(NSData *data, NSURLResponse *response, NSError *error) {
@@ -151,9 +158,10 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, S
 }
 
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest(id self, SEL _cmd, NSURLRequest *request) {
+    if (!gOrigDataTask) return nil;
     NSURLSessionDataTask *task = gOrigDataTask(self, _cmd, request);
     if (ZZLooksLikeDetailRequest(request)) {
-        @synchronized ([ZZNetworkInterception class]) { if (gObservedDetailRequests < 24) gObservedDetailRequests += 1; else return task; }
+        @synchronized (gObservedRequestLock) { if (gObservedDetailRequests < 24) gObservedDetailRequests += 1; else return task; }
         NSURLRequest *copy = request.copy;
         NSURLSession *observer = ZZObserverSession();
         gOrigDataTaskWithCompletion(observer, @selector(dataTaskWithRequest:completionHandler:), copy, ^(NSData *data, NSURLResponse *response, NSError *error) {
@@ -262,6 +270,7 @@ void ZZInstallNetworkInterception(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         ZZEnsureCookieRegistry();
+        ZZEnsureObservedRequestLock();
         ZZRegisterCookieStorage(NSHTTPCookieStorage.sharedHTTPCookieStorage);
         Class cls = [NSURLSessionConfiguration class];
         Class sessionCls = [NSURLSession class];
