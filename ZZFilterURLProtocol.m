@@ -23,6 +23,7 @@ NSUInteger ZZDetailPrefetchEntries(void) { return ZZDetailPrefetchEntryCount; }
 @property(nonatomic, strong) NSURLResponse *receivedResponse;
 @property(nonatomic, strong) NSURLRequest *sourceRequest;
 @property(nonatomic) BOOL shouldProcessResponse;
+@property(nonatomic) BOOL detailCaptureOnly;
 @end
 
 @implementation ZZFilterURLProtocol
@@ -35,9 +36,28 @@ NSUInteger ZZDetailPrefetchEntries(void) { return ZZDetailPrefetchEntryCount; }
     NSString *path = request.URL.path.lowercaseString ?: @"";
     BOOL hostOK = [host hasSuffix:@"zhuanzhuan.com"] || [host hasSuffix:@"zhuanzhuan.com.cn"];
     if (!hostOK) return NO;
-    return [path containsString:@"/zz/transfer/search"] ||
-           [path containsString:@"transmitparamsearch"] ||
-           [path containsString:@"waresshow/moreinfo"];
+    if ([path containsString:@"/zz/transfer/search"] ||
+        [path containsString:@"transmitparamsearch"] ||
+        [path containsString:@"waresshow/moreinfo"]) return YES;
+
+    // v38: also observe the app's own detail request, rather than guessing
+    // the detail endpoint/method from a separate URLSession. This is capture-
+    // only: the original detail response is passed through unchanged.
+    if ([path containsString:@"search"]) return NO;
+    NSArray<NSURLQueryItem *> *query = [NSURLComponents componentsWithURL:request.URL resolvingAgainstBaseURL:NO].queryItems ?: @[];
+    BOOL hasDetailID = NO;
+    for (NSURLQueryItem *item in query) {
+        NSString *name = item.name.lowercaseString ?: @"";
+        if (([name isEqualToString:@"productid"] || [name isEqualToString:@"productid2"] ||
+             [name isEqualToString:@"goodsid"] || [name isEqualToString:@"itemid"] ||
+             [name isEqualToString:@"infoid"] || [name isEqualToString:@"strinfoid"]) && item.value.length) {
+            hasDetailID = YES;
+            break;
+        }
+    }
+    BOOL detailPath = [path containsString:@"detail"] || [path containsString:@"item"] ||
+                      [path containsString:@"goods"] || [path containsString:@"product"];
+    return hasDetailID && detailPath;
 }
 
 + (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request { return request; }
@@ -347,6 +367,10 @@ static void ZZWaitForDetailEnrichment(NSArray<NSString *> *ids, NSDictionary<NSS
     NSMutableURLRequest *request = [self.request mutableCopy];
     [NSURLProtocol setProperty:@YES forKey:kHandledKey inRequest:request];
     self.sourceRequest = request.copy;
+    NSString *path = request.URL.path.lowercaseString ?: @"";
+    self.detailCaptureOnly = !([path containsString:@"/zz/transfer/search"] ||
+                               [path containsString:@"transmitparamsearch"] ||
+                               [path containsString:@"waresshow/moreinfo"]);
     self.responseData = [NSMutableData data];
 
     NSURLSessionConfiguration *configuration = [NSURLSessionConfiguration ephemeralSessionConfiguration];
@@ -406,7 +430,21 @@ static void ZZWaitForDetailEnrichment(NSArray<NSString *> *ids, NSDictionary<NSS
     } else {
         NSError *filterError = nil;
         NSData *original = self.responseData ?: [NSData data];
-        NSData *output = [self.class filteredJSONData:original sourceURL:self.receivedResponse.URL sourceRequest:self.sourceRequest error:&filterError] ?: original;
+        NSData *output = original;
+
+        // v38: learn system-version data from the app's actual detail response.
+        // Do not rewrite the detail page response itself.
+        if (self.detailCaptureOnly && original.length) {
+            id obj = [NSJSONSerialization JSONObjectWithData:original options:NSJSONReadingMutableContainers error:NULL];
+            if (obj) {
+                NSUInteger captured = 0;
+                NSString *pid = ZZFallbackProductIDFromRequest(self.sourceRequest);
+                ZZCollectVersionEntries(obj, pid.length ? pid : nil, 0, &captured);
+                if (captured) ZZFilterDebugWrite(@"[ZZFilterDetailCapture] captured=%lu pid=%@ url=%@", (unsigned long)captured, pid ?: @"", self.receivedResponse.URL.absoluteString ?: @"");
+            }
+        } else {
+            output = [self.class filteredJSONData:original sourceURL:self.receivedResponse.URL sourceRequest:self.sourceRequest error:&filterError] ?: original;
+        }
         BOOL modified = ![output isEqualToData:original];
         NSURLResponse *response = modified ? [self responseByRemovingEncodingAndLength:self.receivedResponse] : self.receivedResponse;
         if (response) [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
@@ -420,6 +458,7 @@ static void ZZWaitForDetailEnrichment(NSArray<NSString *> *ids, NSDictionary<NSS
     self.receivedResponse = nil;
     self.sourceRequest = nil;
     self.shouldProcessResponse = NO;
+    self.detailCaptureOnly = NO;
     (void)session; (void)task;
 }
 @end
