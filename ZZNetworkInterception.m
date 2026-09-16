@@ -128,8 +128,11 @@ static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLRe
     if (after > before) ZZFilterDebugWrite(@"[ZZDetailObserver] captured=%lu method=%@ status=%ld pid=%@ url=%@", (unsigned long)(after-before), request.HTTPMethod ?: @"GET", (long)status, ZZProductIDFromRequest(request), request.URL.absoluteString ?: @"");
 }
 
-static NSURLSessionDataTask *(*gOrigDataTaskWithCompletion)(id, SEL, NSURLRequest *, void (^)(NSData *, NSURLResponse *, NSError *));
-static NSURLSessionDataTask *(*gOrigDataTask)(id, SEL, NSURLRequest *);
+
+@interface NSURLSession (ZZFilterObserveForward)
+- (NSURLSessionDataTask *)zz_filter_dataTaskWithRequest:(NSURLRequest *)request;
+- (NSURLSessionDataTask *)zz_filter_dataTaskWithRequest_completion:(NSURLRequest *)request completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler;
+@end
 
 static NSURLSession *ZZObserverSession(void) {
     static NSURLSession *session;
@@ -144,13 +147,13 @@ static NSURLSession *ZZObserverSession(void) {
 }
 
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, SEL _cmd, NSURLRequest *request, void (^completion)(NSData *, NSURLResponse *, NSError *)) {
-    if (!gOrigDataTaskWithCompletion) return nil;
-    NSURLSessionDataTask *task = gOrigDataTaskWithCompletion(self, _cmd, request, completion);
+    (void)_cmd;
+    NSURLSessionDataTask *task = [(NSURLSession *)self zz_filter_dataTaskWithRequest_completion:request completionHandler:completion];
     if (ZZLooksLikeDetailRequest(request)) {
         @synchronized (gObservedRequestLock) { if (gObservedDetailRequests < 24) gObservedDetailRequests += 1; else return task; }
         NSURLRequest *copy = request.copy;
         NSURLSession *observer = ZZObserverSession();
-        gOrigDataTaskWithCompletion(observer, @selector(dataTaskWithRequest:completionHandler:), copy, ^(NSData *data, NSURLResponse *response, NSError *error) {
+        [observer zz_filter_dataTaskWithRequest_completion:copy completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
             ZZObserveDetailResponse(copy, data, response, error);
         }).resume;
     }
@@ -158,13 +161,13 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, S
 }
 
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest(id self, SEL _cmd, NSURLRequest *request) {
-    if (!gOrigDataTask) return nil;
-    NSURLSessionDataTask *task = gOrigDataTask(self, _cmd, request);
+    (void)_cmd;
+    NSURLSessionDataTask *task = [(NSURLSession *)self zz_filter_dataTaskWithRequest:request];
     if (ZZLooksLikeDetailRequest(request)) {
         @synchronized (gObservedRequestLock) { if (gObservedDetailRequests < 24) gObservedDetailRequests += 1; else return task; }
         NSURLRequest *copy = request.copy;
         NSURLSession *observer = ZZObserverSession();
-        gOrigDataTaskWithCompletion(observer, @selector(dataTaskWithRequest:completionHandler:), copy, ^(NSData *data, NSURLResponse *response, NSError *error) {
+        [observer zz_filter_dataTaskWithRequest_completion:copy completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
             ZZObserveDetailResponse(copy, data, response, error);
         }).resume;
     }
@@ -275,15 +278,13 @@ void ZZInstallNetworkInterception(void) {
         Class cls = [NSURLSessionConfiguration class];
         Class sessionCls = [NSURLSession class];
         Method dataTaskWithCompletion = class_getInstanceMethod(sessionCls, @selector(dataTaskWithRequest:completionHandler:));
-        Method replacementCompletion = class_getInstanceMethod(sessionCls, @selector(zz_filter_dataTaskWithRequest_completion:));
+        Method replacementCompletion = class_getInstanceMethod(sessionCls, @selector(zz_filter_dataTaskWithRequest_completion:completionHandler:));
         if (dataTaskWithCompletion && replacementCompletion) {
-            gOrigDataTaskWithCompletion = (void *)method_getImplementation(dataTaskWithCompletion);
             method_exchangeImplementations(dataTaskWithCompletion, replacementCompletion);
         }
         Method dataTaskSimple = class_getInstanceMethod(sessionCls, @selector(dataTaskWithRequest:));
         Method replacementSimple = class_getInstanceMethod(sessionCls, @selector(zz_filter_dataTaskWithRequest:));
         if (dataTaskSimple && replacementSimple) {
-            gOrigDataTask = (void *)method_getImplementation(dataTaskSimple);
             method_exchangeImplementations(dataTaskSimple, replacementSimple);
         }
 
