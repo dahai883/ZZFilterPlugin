@@ -37,6 +37,31 @@ if '@["' in impl_text:
     print("FAIL malformed Objective-C array literal token @[\" detected")
     fail = True
 
+# v43 regression guard: private NSURLSession selectors and static helpers must be
+# declared before their first call. Clang otherwise reports either a missing
+# selector or "static declaration follows non-static declaration".
+net = (root / 'ZZNetworkInterception.m').read_text(errors='replace')
+required_decls = [
+    '@interface NSURLSession (ZZFilterObserveForward)',
+    '@interface NSURLSessionTask (ZZFilterResumeObserve)',
+    'static NSURLSession *ZZObserverSession(void);',
+    'static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(',
+    'static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest(id self, SEL _cmd, NSURLRequest *request);',
+]
+for decl in required_decls:
+    if net.find(decl) < 0:
+        print(f'FAIL ZZNetworkInterception.m: missing early declaration: {decl}')
+        fail = True
+
+# The first runtime call must occur after the declarations block.
+decl_end = max(net.find('@interface NSURLSessionTask (ZZFilterResumeObserve)'),
+               net.find('@end', net.find('@interface NSURLSessionTask (ZZFilterResumeObserve)')))
+for token in ['ZZObserverSession()', '[observer zz_filter_dataTaskWithRequest_completion:', '[observer zz_filter_dataTaskWithRequest:']:
+    pos = net.find(token)
+    if pos >= 0 and pos < decl_end:
+        print(f'FAIL ZZNetworkInterception.m: first use precedes declarations: {token}')
+        fail = True
+
 if fail:
     sys.exit(1)
 print('STRUCTURE CHECK PASSED')

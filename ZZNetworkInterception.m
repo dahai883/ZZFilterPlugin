@@ -17,7 +17,22 @@ static const void *kZZObservedTaskKey = &kZZObservedTaskKey;
 
 static void ZZEnsureDetailCaptureLock(void);
 static void ZZEnsureObservedRequestLock(void);
+static NSURLSession *ZZObserverSession(void);
+static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, SEL _cmd, NSURLRequest *request, void (^completion)(NSData *, NSURLResponse *, NSError *));
+static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest(id self, SEL _cmd, NSURLRequest *request);
 
+// All private selectors/helpers are declared before first use.
+@interface NSURLSession (ZZFilterObserveForward)
+- (NSURLSessionDataTask *)zz_filter_dataTaskWithRequest:(NSURLRequest *)request;
+- (NSURLSessionDataTask *)zz_filter_dataTaskWithRequest_completion:(NSURLRequest *)request completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler;
+@end
+
+@interface NSURLSessionTask (ZZFilterResumeObserve)
+- (void)zz_filter_resume;
+@end
+
+// Keep private category declarations and helper prototypes above every use.
+// This avoids implicit declarations / missing-selector diagnostics under clang.
 NSUInteger ZZDetailCapturedEntries(void) {
     ZZEnsureDetailCaptureLock();
     @synchronized (gDetailCaptureLock) { return gDetailCapturedEntries; }
@@ -184,11 +199,6 @@ static void ZZInspectTaskForDetail(NSURLSessionDataTask *task) {
 }
 
 
-@interface NSURLSession (ZZFilterObserveForward)
-- (NSURLSessionDataTask *)zz_filter_dataTaskWithRequest:(NSURLRequest *)request;
-- (NSURLSessionDataTask *)zz_filter_dataTaskWithRequest_completion:(NSURLRequest *)request completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler;
-@end
-
 static NSURLSession *ZZObserverSession(void) {
     static NSURLSession *session;
     static dispatch_once_t onceToken;
@@ -217,10 +227,6 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest(id self, SEL _cmd, NS
     return task;
 }
 
-
-@interface NSURLSessionTask (ZZFilterResumeObserve)
-- (void)zz_filter_resume;
-@end
 
 @implementation NSURLSessionTask (ZZFilterResumeObserve)
 - (void)zz_filter_resume {
