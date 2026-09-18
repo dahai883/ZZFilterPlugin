@@ -128,44 +128,128 @@ static BOOL ZZLooksLikeDetailRequest(NSURLRequest *request) {
     return [path containsString:@"detail"] || [path containsString:@"moreinfo"] || [path containsString:@"waresshow"] || [path containsString:@"goods"] || [path containsString:@"item"];
 }
 
-static void ZZCaptureDetailObject(id obj, NSString *fallbackPID, NSUInteger depth) {
-    if (depth > 14 || !obj) return;
+static NSString *ZZStringValue(id value) {
+    if ([value isKindOfClass:NSString.class]) return [(NSString *)value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if ([value respondsToSelector:@selector(stringValue)]) return [[value stringValue] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    return @"";
+}
+
+static void ZZCollectExplicitProductIDs(id obj, NSMutableSet<NSString *> *ids, NSUInteger depth) {
+    if (depth > 14 || !obj || !ids) return;
     if ([obj isKindOfClass:NSString.class]) {
-        NSString *text = [(NSString *)obj stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        NSString *text = [(NSString *)obj stringByRemovingPercentEncoding] ?: (NSString *)obj;
         if (([text hasPrefix:@"{"] || [text hasPrefix:@"["]) && text.length > 2) {
             id parsed = [NSJSONSerialization JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding] options:NSJSONReadingMutableContainers error:NULL];
-            if (parsed) ZZCaptureDetailObject(parsed, fallbackPID, depth + 1);
+            if (parsed) ZZCollectExplicitProductIDs(parsed, ids, depth + 1);
         }
         return;
     }
-    if ([obj isKindOfClass:NSDictionary.class]) {
-        NSDictionary *d = obj;
-        NSString *pid = nil;
-        for (NSString *k in @[@"productId", @"productID", @"goodsId", @"itemId", @"infoId", @"strInfoId", @"id"]) {
-            id v = d[k];
-            if ([v isKindOfClass:NSString.class] && [v length]) { pid = v; break; }
-            if ([v respondsToSelector:@selector(stringValue)] && [v stringValue].length) { pid = [v stringValue]; break; }
+    if ([obj isKindOfClass:NSArray.class]) {
+        for (id child in (NSArray *)obj) ZZCollectExplicitProductIDs(child, ids, depth + 1);
+        return;
+    }
+    if (![obj isKindOfClass:NSDictionary.class]) return;
+    NSDictionary *d = (NSDictionary *)obj;
+    for (NSString *key in @[@"productId", @"productID", @"goodsId", @"goodsID", @"itemId", @"itemID", @"listingId", @"listingID", @"strInfoId", @"infoId"]) {
+        NSString *value = ZZStringValue(d[key]);
+        if (value.length && value.length < 128) [ids addObject:value];
+    }
+    id map = d[@"itemId2AttrInfo"];
+    if ([map isKindOfClass:NSDictionary.class]) {
+        for (NSString *key in (NSDictionary *)map) {
+            if (key.length && key.length < 128) [ids addObject:key];
         }
-        if (!pid.length) pid = fallbackPID;
-        NSString *version = ZZProductVersionFromDictionary(d);
-        if (pid.length && version.length) {
-            NSMutableDictionary *entry = [d mutableCopy];
-            entry[@"productId"] = pid;
-            [[ZZProductVisibility shared] recordEntries:@[entry] forProductIDs:@[pid]];
-            ZZEnsureDetailCaptureLock();
-            @synchronized (gDetailCaptureLock) { gDetailCapturedEntries += 1; }
+    }
+    for (NSString *key in d) {
+        id child = d[key];
+        if ([child isKindOfClass:NSDictionary.class] || [child isKindOfClass:NSArray.class] || [child isKindOfClass:NSString.class]) {
+            ZZCollectExplicitProductIDs(child, ids, depth + 1);
         }
-        id map = d[@"itemId2AttrInfo"];
-        if (map) ZZCaptureDetailObject(map, pid ?: fallbackPID, depth + 1);
-        for (NSString *key in d) {
-            if ([key isEqualToString:@"itemId2AttrInfo"]) continue;
-            id value = d[key];
-            if ([value isKindOfClass:NSDictionary.class] || [value isKindOfClass:NSArray.class] || [value isKindOfClass:NSString.class]) ZZCaptureDetailObject(value, pid ?: fallbackPID, depth + 1);
-        }
-    } else if ([obj isKindOfClass:NSArray.class]) {
-        for (id child in (NSArray *)obj) ZZCaptureDetailObject(child, fallbackPID, depth + 1);
     }
 }
+
+static void ZZRecordCapturedEntry(NSDictionary *entry, NSString *pid) {
+    if (!pid.length) return;
+    NSMutableDictionary *copy = [entry mutableCopy] ?: [NSMutableDictionary dictionary];
+    copy[@"productId"] = pid;
+    [[ZZProductVisibility shared] recordEntries:@[copy.copy] forProductIDs:@[pid]];
+    ZZEnsureDetailCaptureLock();
+    @synchronized (gDetailCaptureLock) { gDetailCapturedEntries += 1; }
+}
+
+// v46: The real app response can place the product id and the system-version
+// attribute in different branches. The old one-pass inherited-PID walk could
+// therefore see iOS 26.6.1 but never associate it with the product. Do a bounded
+// two-pass association: request PID first; otherwise use a unique explicit PID;
+// for itemId2AttrInfo, use each map key as the PID for its own attribute object.
+static NSUInteger ZZCaptureActualDetailResponse(id obj, NSString *requestPID, NSUInteger depth) {
+    if (depth > 14 || !obj) return 0;
+    NSUInteger captured = 0;
+
+    if ([obj isKindOfClass:NSString.class]) {
+        NSString *text = [(NSString *)obj stringByRemovingPercentEncoding] ?: (NSString *)obj;
+        if (([text hasPrefix:@"{"] || [text hasPrefix:@"["]) && text.length > 2) {
+            id parsed = [NSJSONSerialization JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding] options:NSJSONReadingMutableContainers error:NULL];
+            if (parsed) return ZZCaptureActualDetailResponse(parsed, requestPID, depth + 1);
+        }
+        if (requestPID.length) {
+            NSString *version = ZZProductVersionFromObject(text);
+            if (version.length) {
+                ZZRecordCapturedEntry(@{ @"detailText": text, @"zzSystemVersion": version }, requestPID);
+                return 1;
+            }
+        }
+        return 0;
+    }
+
+    if ([obj isKindOfClass:NSArray.class]) {
+        // Prefer item-level objects. A request PID, when present, is safe to
+        // reuse across sibling branches of the same detail response.
+        for (id child in (NSArray *)obj) captured += ZZCaptureActualDetailResponse(child, requestPID, depth + 1);
+        return captured;
+    }
+    if (![obj isKindOfClass:NSDictionary.class]) return 0;
+
+    NSDictionary *d = (NSDictionary *)obj;
+    id map = d[@"itemId2AttrInfo"];
+    if ([map isKindOfClass:NSDictionary.class]) {
+        for (NSString *mapPID in (NSDictionary *)map) {
+            id attrs = ((NSDictionary *)map)[mapPID];
+            NSString *version = ZZProductVersionFromObject(attrs);
+            if (version.length && mapPID.length) {
+                ZZRecordCapturedEntry(@{ @"detail": attrs ?: @{}, @"zzSystemVersion": version }, mapPID);
+                captured += 1;
+            }
+            captured += ZZCaptureActualDetailResponse(attrs, mapPID, depth + 1);
+        }
+    }
+
+    NSString *localVersion = ZZProductVersionFromDictionary(d);
+    if (localVersion.length) {
+        NSString *pid = requestPID;
+        if (!pid.length) {
+            NSMutableSet<NSString *> *localIDs = [NSMutableSet set];
+            ZZCollectExplicitProductIDs(d, localIDs, depth + 1);
+            if (localIDs.count == 1) pid = localIDs.anyObject;
+        }
+        if (pid.length) {
+            ZZRecordCapturedEntry(d, pid);
+            captured += 1;
+        }
+    }
+
+    // If this dictionary itself did not contain enough identity information,
+    // descend into known response wrappers. The depth bound prevents the old
+    // global-runtime-scan performance problem.
+    for (NSString *key in @[@"respData", @"report", @"params", @"data", @"result", @"detail", @"detailInfo", @"detailData", @"attributes", @"attrs", @"attributeList", @"attrList", @"content"]) {
+        id child = d[key];
+        if ([child isKindOfClass:NSDictionary.class] || [child isKindOfClass:NSArray.class] || [child isKindOfClass:NSString.class]) {
+            captured += ZZCaptureActualDetailResponse(child, requestPID, depth + 1);
+        }
+    }
+    return captured;
+}
+
 
 static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLResponse *response, NSError *error) {
     NSInteger status = [response isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)response).statusCode : 0;
@@ -213,8 +297,15 @@ static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLRe
         return;
     }
     NSUInteger before = ZZDetailCapturedEntries();
-    ZZCaptureDetailObject(obj, ZZProductIDFromRequest(request), 0);
+    NSString *requestPID = ZZProductIDFromRequest(request);
+    NSUInteger captured = ZZCaptureActualDetailResponse(obj, requestPID, 0);
     NSUInteger after = ZZDetailCapturedEntries();
+    if (captured == 0) {
+        NSMutableSet<NSString *> *candidateIDs = [NSMutableSet set];
+        ZZCollectExplicitProductIDs(obj, candidateIDs, 0);
+        NSString *version = ZZProductVersionFromObject(obj);
+        ZZFilterDebugWrite(@"[ZZDetailObserver] unlinked version=%@ requestPID=%@ candidateIDs=%lu", version ?: @"", requestPID ?: @"", (unsigned long)candidateIDs.count);
+    }
     if (after > before) ZZFilterDebugWrite(@"[ZZDetailObserver] captured=%lu method=%@ status=%ld pid=%@ url=%@", (unsigned long)(after-before), request.HTTPMethod ?: @"GET", (long)status, ZZProductIDFromRequest(request), request.URL.absoluteString ?: @"");
 }
 
