@@ -1,17 +1,17 @@
-# ZZFilterPlugin v44
+# ZZFilterPlugin v45
 
 独立的系统版本筛选与详情数据增强测试版本。
 
-本版重点：不再只依赖 `NSURLSession` 的 dataTask 创建方法观察详情请求，而是额外在 `NSURLSessionTask resume` 边界检查实际任务的 originalRequest/currentRequest。仅对同域、疑似详情请求进行有限观察，并对观察任务做关联标记，避免递归。
+本版重点：不再只依赖插件主动构造的详情请求。对宿主 App 自己通过 `NSURLSession dataTaskWithRequest:completionHandler:` 返回的疑似详情响应增加“实际响应观察”，优先从 App 已经成功拿到的数据中学习系统版本。
 
 诊断新增：
-- `详情观察`：实际观察到的疑似详情任务数量；
-- 调试日志记录实际 method / URL / productId；
-- 保留 v42 的 24 个观察任务上限与受限详情预取。
+- 实际详情响应：宿主 App 真实完成回调的详情响应数量；
+- 实际最后状态：宿主 App 真实详情响应的 HTTP 状态；
+- Allow：真实响应的 Allow 头；
+- 调试日志记录真实 method / URL / productId / status / Content-Type / body 预览。
 
-编译前会先通过源码结构检查，确保私有 category 方法、static helper 均已在首次使用前声明；同时打包前会清理 `__pycache__`、`.pyc` 等 Python 缓存，并运行源码结构检查。
+插件自身的有限详情预取仍保留，用于兼容没有走 completion-handler 的场景。观察请求使用专用标记，避免插件自己的观察请求被重复统计。
+
+编译前继续执行源码结构检查，避免 v43 一类的声明顺序、私有 selector 可见性和 singleton 声明问题。
 
 本项目为独立的授权测试/筛选实现，不修改激活、授权、签名或许可状态。
-
-
-v44 编译稳定性修正：把 NSURLSession/NSURLSessionTask 私有 category 声明及 ZZObserverSession 等 static helper 原型统一前置到首次使用之前，并把该规则加入源码结构检查，避免 v43 的隐式声明/重复 static 声明错误再次出现。

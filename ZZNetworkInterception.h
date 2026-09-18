@@ -13,5 +13,9 @@ FOUNDATION_EXPORT NSArray<NSHTTPCookie *> *ZZCookiesForURL(NSURL * _Nullable url
 FOUNDATION_EXPORT void ZZStoreResponseCookies(NSHTTPURLResponse * _Nullable response, NSURL * _Nullable url);
 FOUNDATION_EXPORT NSUInteger ZZDetailCapturedEntries(void);
 FOUNDATION_EXPORT NSUInteger ZZObservedDetailRequests(void);
+FOUNDATION_EXPORT NSUInteger ZZObservedDetailResponses(void);
+FOUNDATION_EXPORT NSUInteger ZZObservedDetail2xxResponses(void);
+FOUNDATION_EXPORT NSInteger ZZObservedDetailLastStatus(void);
+FOUNDATION_EXPORT NSString *ZZObservedDetailLastAllow(void);
 
 NS_ASSUME_NONNULL_END
