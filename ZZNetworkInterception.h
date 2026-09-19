@@ -15,6 +15,7 @@ FOUNDATION_EXPORT NSUInteger ZZDetailCapturedEntries(void);
 FOUNDATION_EXPORT NSUInteger ZZObservedDetailRequests(void);
 FOUNDATION_EXPORT NSUInteger ZZObservedDetailResponses(void);
 FOUNDATION_EXPORT NSUInteger ZZObservedDetail2xxResponses(void);
+FOUNDATION_EXPORT NSUInteger ZZObservedDetailVersionMatches(void);
 FOUNDATION_EXPORT NSInteger ZZObservedDetailLastStatus(void);
 FOUNDATION_EXPORT NSString *ZZObservedDetailLastAllow(void);
 

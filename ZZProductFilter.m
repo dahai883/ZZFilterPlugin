@@ -229,7 +229,18 @@ static NSString *ZZFindVersionDeep(id obj, NSUInteger depth) {
         if (v.length) return v;
     }
 
-    // Last pass over nested containers. This is bounded by depth.
+    // v47: some real detail responses keep the iOS value under an opaque
+    // attribute key (not one of the known branch names). The previous pass
+    // only descended into containers, so a leaf string such as "iOS 18.7.7"
+    // could be skipped. First inspect every leaf string with the conservative
+    // iOS/system-label parser, then descend into containers as before.
+    for (NSString *key in d) {
+        id child = d[key];
+        if ([child isKindOfClass:NSString.class]) {
+            NSString *v = ZZExtractVersionFromText((NSString *)child);
+            if (v.length) return v;
+        }
+    }
     for (NSString *key in d) {
         id child = d[key];
         if ([child isKindOfClass:NSDictionary.class] || [child isKindOfClass:NSArray.class]) {

@@ -11,6 +11,7 @@ static NSUInteger gDetailCapturedEntries;
 static NSUInteger gObservedDetailRequests;
 static NSUInteger gObservedDetailResponses;
 static NSUInteger gObservedDetail2xxResponses;
+static NSUInteger gObservedDetailVersionMatches;
 static NSInteger gObservedDetailLastStatusCode;
 static NSString *gObservedDetailLastAllowHeader;
 static NSObject *gDetailCaptureLock;
@@ -55,6 +56,11 @@ NSUInteger ZZObservedDetailResponses(void) {
 NSUInteger ZZObservedDetail2xxResponses(void) {
     ZZEnsureObservedRequestLock();
     @synchronized (gObservedRequestLock) { return gObservedDetail2xxResponses; }
+}
+
+NSUInteger ZZObservedDetailVersionMatches(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailVersionMatches; }
 }
 
 NSInteger ZZObservedDetailLastStatus(void) {
@@ -114,7 +120,22 @@ static NSString *ZZRequestValue(NSURLRequest *request, NSArray<NSString *> *name
 }
 
 static NSString *ZZProductIDFromRequest(NSURLRequest *request) {
-    return ZZRequestValue(request, @[@"productId", @"productID", @"goodsId", @"itemId", @"infoId", @"strInfoId", @"item_id", @"goods_id"]);
+    return ZZRequestValue(request, @[@"productId", @"productID", @"goodsId", @"itemId", @"infoId", @"strInfoId", @"item_id", @"goods_id", @"wareId", @"wareID", @"ware_id", @"auctionId", @"auctionID", @"spuId", @"spuID"]);
+}
+
+static NSString *ZZProductIDFromResponseURL(NSURL *url) {
+    if (!url) return @"";
+    NSURLComponents *c = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
+    for (NSURLQueryItem *item in c.queryItems ?: @[]) {
+        NSString *name = item.name.lowercaseString ?: @"";
+        if ([name isEqualToString:@"productid"] || [name isEqualToString:@"goodsid"] ||
+            [name isEqualToString:@"itemid"] || [name isEqualToString:@"infoid"] ||
+            [name isEqualToString:@"strinfoid"] || [name isEqualToString:@"wareid"] ||
+            [name isEqualToString:@"auctionid"] || [name isEqualToString:@"spuid"]) {
+            if (item.value.length) return item.value;
+        }
+    }
+    return @"";
 }
 
 static BOOL ZZLooksLikeDetailRequest(NSURLRequest *request) {
@@ -298,13 +319,44 @@ static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLRe
     }
     NSUInteger before = ZZDetailCapturedEntries();
     NSString *requestPID = ZZProductIDFromRequest(request);
+    if (!requestPID.length) requestPID = ZZProductIDFromResponseURL(response.URL);
+
+    // v47: perform a whole-response identity/version pass before the structural
+    // association. This covers payloads where the ID and "iOS 18.7.7" live in
+    // sibling branches rather than the same dictionary.
+    NSMutableSet<NSString *> *candidateIDs = [NSMutableSet set];
+    ZZCollectExplicitProductIDs(obj, candidateIDs, 0);
+    NSString *wholeResponseVersion = ZZProductVersionFromObject(obj);
+    if (!wholeResponseVersion.length) {
+        NSData *flat = [NSJSONSerialization dataWithJSONObject:obj options:0 error:NULL];
+        NSString *flatText = flat.length ? [[NSString alloc] initWithData:flat encoding:NSUTF8StringEncoding] : @"";
+        wholeResponseVersion = ZZExtractVersionFromText(flatText);
+    }
+    if (wholeResponseVersion.length) {
+        ZZEnsureObservedRequestLock();
+        @synchronized (gObservedRequestLock) { gObservedDetailVersionMatches += 1; }
+    }
+
     NSUInteger captured = ZZCaptureActualDetailResponse(obj, requestPID, 0);
     NSUInteger after = ZZDetailCapturedEntries();
+
+    // If there is exactly one explicit product identity in the whole response,
+    // it is safe to bind the response-level system version to that product.
+    if (captured == 0 && wholeResponseVersion.length && !requestPID.length && candidateIDs.count == 1) {
+        NSString *pid = candidateIDs.anyObject;
+        ZZRecordCapturedEntry(@{ @"detail": obj, @"zzSystemVersion": wholeResponseVersion }, pid);
+        captured = 1;
+        after = ZZDetailCapturedEntries();
+    }
+
     if (captured == 0) {
-        NSMutableSet<NSString *> *candidateIDs = [NSMutableSet set];
-        ZZCollectExplicitProductIDs(obj, candidateIDs, 0);
-        NSString *version = ZZProductVersionFromObject(obj);
-        ZZFilterDebugWrite(@"[ZZDetailObserver] unlinked version=%@ requestPID=%@ candidateIDs=%lu", version ?: @"", requestPID ?: @"", (unsigned long)candidateIDs.count);
+        ZZFilterDebugWrite(@"[ZZDetailObserver] unlinked version=%@ requestPID=%@ candidateIDs=%lu urlPID=%@",
+                           wholeResponseVersion ?: @"", requestPID ?: @"", (unsigned long)candidateIDs.count,
+                           ZZProductIDFromResponseURL(response.URL) ?: @"");
+    } else {
+        ZZFilterDebugWrite(@"[ZZDetailObserver] version=%@ requestPID=%@ candidateIDs=%lu captured=%lu",
+                           wholeResponseVersion ?: @"", requestPID ?: @"", (unsigned long)candidateIDs.count,
+                           (unsigned long)(after-before));
     }
     if (after > before) ZZFilterDebugWrite(@"[ZZDetailObserver] captured=%lu method=%@ status=%ld pid=%@ url=%@", (unsigned long)(after-before), request.HTTPMethod ?: @"GET", (long)status, ZZProductIDFromRequest(request), request.URL.absoluteString ?: @"");
 }
