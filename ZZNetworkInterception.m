@@ -25,6 +25,7 @@ static void ZZEnsureObservedRequestLock(void);
 static NSURLSession *ZZObserverSession(void);
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, SEL _cmd, NSURLRequest *request, void (^completion)(NSData *, NSURLResponse *, NSError *));
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest(id self, SEL _cmd, NSURLRequest *request);
+static NSString *ZZExtractVersionFromFlatText(NSString *value);
 
 // All private selectors/helpers are declared before first use.
 @interface NSURLSession (ZZFilterObserveForward)
@@ -71,6 +72,29 @@ NSInteger ZZObservedDetailLastStatus(void) {
 NSString *ZZObservedDetailLastAllow(void) {
     ZZEnsureObservedRequestLock();
     @synchronized (gObservedRequestLock) { return gObservedDetailLastAllowHeader.copy ?: @""; }
+}
+
+static NSString *ZZExtractVersionFromFlatText(NSString *value) {
+    if (![value isKindOfClass:NSString.class] || value.length == 0) return @"";
+
+    NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:
+        @"(?i)\\b(?:ios|iphone\\s*os|ipad\\s*os)\\s*(?:版本|version)?\\s*[:：-]?\\s*(\\d{1,3}(?:\\.\\d{1,3}){0,2})\\b"
+        options:0 error:NULL];
+    NSTextCheckingResult *m = [re firstMatchInString:value options:0 range:NSMakeRange(0, value.length)];
+    if (m) {
+        NSRange r = [m rangeAtIndex:1];
+        if (r.location != NSNotFound) return [value substringWithRange:r];
+    }
+
+    re = [NSRegularExpression regularExpressionWithPattern:
+        @"(?:系统版本(?:号)?|系统\\s*版本|OS版本|iOS\\s*版本(?:号)?|system\\s*version)\\s*[:：=]?\\s*(?:iOS\\s*)?(\\d{1,3}(?:\\.\\d{1,3}){0,2})"
+        options:NSRegularExpressionCaseInsensitive error:NULL];
+    m = [re firstMatchInString:value options:0 range:NSMakeRange(0, value.length)];
+    if (m) {
+        NSRange r = [m rangeAtIndex:1];
+        if (r.location != NSNotFound) return [value substringWithRange:r];
+    }
+    return @"";
 }
 
 static void ZZEnsureDetailCaptureLock(void) {
@@ -330,7 +354,7 @@ static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLRe
     if (!wholeResponseVersion.length) {
         NSData *flat = [NSJSONSerialization dataWithJSONObject:obj options:0 error:NULL];
         NSString *flatText = flat.length ? [[NSString alloc] initWithData:flat encoding:NSUTF8StringEncoding] : @"";
-        wholeResponseVersion = ZZExtractVersionFromText(flatText);
+        wholeResponseVersion = ZZExtractVersionFromFlatText(flatText);
     }
     if (wholeResponseVersion.length) {
         ZZEnsureObservedRequestLock();

@@ -41,6 +41,15 @@ if '@["' in impl_text:
 # declared before their first call. Clang otherwise reports either a missing
 # selector or "static declaration follows non-static declaration".
 net = (root / 'ZZNetworkInterception.m').read_text(errors='replace')
+# v48 regression guard: helpers used from ZZNetworkInterception.m must have an
+# early prototype and a local static definition.
+if 'ZZExtractVersionFromFlatText(' in net:
+    if 'static NSString *ZZExtractVersionFromFlatText(NSString *value);' not in net:
+        print('FAIL ZZNetworkInterception.m: missing early declaration for ZZExtractVersionFromFlatText')
+        fail = True
+    if 'static NSString *ZZExtractVersionFromFlatText(NSString *value) {' not in net:
+        print('FAIL ZZNetworkInterception.m: missing local definition for ZZExtractVersionFromFlatText')
+        fail = True
 required_decls = [
     '@interface NSURLSession (ZZFilterObserveForward)',
     '@interface NSURLSessionTask (ZZFilterResumeObserve)',
