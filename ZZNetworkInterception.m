@@ -17,6 +17,8 @@ static NSString *gObservedDetailLastAllowHeader;
 static NSString *gObservedDetailLast2xxVersion;
 static NSUInteger gObservedDetailLast2xxBytes;
 static NSString *gObservedDetailLast2xxContentType;
+static NSString *gObservedDetailLast2xxURL;
+static NSString *gObservedDetailLast2xxBody;
 static NSObject *gDetailCaptureLock;
 static NSObject *gObservedRequestLock;
 static __thread BOOL gZZInsideObserverRequest = NO;
@@ -28,12 +30,16 @@ static void ZZEnsureObservedRequestLock(void);
 static NSURLSession *ZZObserverSession(void);
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, SEL _cmd, NSURLRequest *request, void (^completion)(NSData *, NSURLResponse *, NSError *));
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest(id self, SEL _cmd, NSURLRequest *request);
+static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL(id self, SEL _cmd, NSURL *url);
+static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL_completion(id self, SEL _cmd, NSURL *url, void (^completion)(NSData *, NSURLResponse *, NSError *));
 static NSString *ZZExtractVersionFromFlatText(NSString *value);
 
 // All private selectors/helpers are declared before first use.
 @interface NSURLSession (ZZFilterObserveForward)
 - (NSURLSessionDataTask *)zz_filter_dataTaskWithRequest:(NSURLRequest *)request;
 - (NSURLSessionDataTask *)zz_filter_dataTaskWithRequest_completion:(NSURLRequest *)request completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler;
+- (NSURLSessionDataTask *)zz_filter_dataTaskWithURL:(NSURL *)url;
+- (NSURLSessionDataTask *)zz_filter_dataTaskWithURL_completion:(NSURL *)url completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler;
 @end
 
 @interface NSURLSessionTask (ZZFilterResumeObserve)
@@ -90,6 +96,16 @@ NSUInteger ZZObservedDetailLast2xxBytes(void) {
 NSString *ZZObservedDetailLast2xxContentType(void) {
     ZZEnsureObservedRequestLock();
     @synchronized (gObservedRequestLock) { return gObservedDetailLast2xxContentType.copy ?: @""; }
+}
+
+NSString *ZZObservedDetailLast2xxURL(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailLast2xxURL.copy ?: @""; }
+}
+
+NSString *ZZObservedDetailLast2xxBody(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailLast2xxBody.copy ?: @""; }
 }
 
 static NSString *ZZExtractVersionFromFlatText(NSString *value) {
@@ -362,6 +378,11 @@ static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLRe
             gObservedDetailLast2xxVersion = raw2xxVersion.copy ?: @"";
             gObservedDetailLast2xxBytes = data.length;
             gObservedDetailLast2xxContentType = contentType.copy ?: @"";
+            gObservedDetailLast2xxURL = response.URL.absoluteString.copy ?: request.URL.absoluteString.copy ?: @"";
+            NSString *bodyText = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+            if (!bodyText.length) bodyText = [[NSString alloc] initWithData:data encoding:NSASCIIStringEncoding];
+            if (bodyText.length > 420) bodyText = [bodyText substringToIndex:420];
+            gObservedDetailLast2xxBody = bodyText.copy ?: @"";
             if (raw2xxVersion.length) gObservedDetailVersionMatches += 1;
         }
     }
@@ -531,6 +552,34 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest(id self, SEL _cmd, NS
     return task;
 }
 
+static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL_completion(id self, SEL _cmd, NSURL *url, void (^completion)(NSData *, NSURLResponse *, NSError *)) {
+    (void)_cmd;
+    if (!url) return [(NSURLSession *)self zz_filter_dataTaskWithURL_completion:url completionHandler:completion];
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+    BOOL isDetail = ZZLooksLikeDetailRequest(request);
+    if (isDetail && !gZZInsideObserverRequest) {
+        void (^originalCompletion)(NSData *, NSURLResponse *, NSError *) = [completion copy];
+        NSURLRequest *observedRequest = request.copy;
+        completion = ^(NSData *data, NSURLResponse *response, NSError *error) {
+            ZZObserveDetailResponse(observedRequest, data, response, error);
+            if (originalCompletion) originalCompletion(data, response, error);
+        };
+        ZZStartObserverForRequest(request);
+    }
+    return [(NSURLSession *)self zz_filter_dataTaskWithURL_completion:url completionHandler:completion];
+}
+
+static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL(id self, SEL _cmd, NSURL *url) {
+    (void)_cmd;
+    if (!url) return [(NSURLSession *)self zz_filter_dataTaskWithURL:url];
+    NSURLSessionDataTask *task = [(NSURLSession *)self zz_filter_dataTaskWithURL:url];
+    if (!gZZInsideObserverRequest) {
+        NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+        if (ZZLooksLikeDetailRequest(request)) ZZStartObserverForRequest(request);
+    }
+    return task;
+}
+
 
 @implementation NSURLSessionTask (ZZFilterResumeObserve)
 - (void)zz_filter_resume {
@@ -630,11 +679,15 @@ static void ZZAddProtocolToConfiguration(NSURLSessionConfiguration *configuratio
 @interface NSURLSession (ZZFilterObserve)
 - (NSURLSessionDataTask *)zz_filter_dataTaskWithRequest:(NSURLRequest *)request;
 - (NSURLSessionDataTask *)zz_filter_dataTaskWithRequest_completion:(NSURLRequest *)request completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler;
+- (NSURLSessionDataTask *)zz_filter_dataTaskWithURL:(NSURL *)url;
+- (NSURLSessionDataTask *)zz_filter_dataTaskWithURL_completion:(NSURL *)url completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler;
 @end
 
 @implementation NSURLSession (ZZFilterObserve)
 - (NSURLSessionDataTask *)zz_filter_dataTaskWithRequest:(NSURLRequest *)request { return ZZ_filter_dataTaskWithRequest(self, _cmd, request); }
 - (NSURLSessionDataTask *)zz_filter_dataTaskWithRequest_completion:(NSURLRequest *)request completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler { return ZZ_filter_dataTaskWithRequest_completion(self, _cmd, request, completionHandler); }
+- (NSURLSessionDataTask *)zz_filter_dataTaskWithURL:(NSURL *)url { return ZZ_filter_dataTaskWithURL(self, _cmd, url); }
+- (NSURLSessionDataTask *)zz_filter_dataTaskWithURL_completion:(NSURL *)url completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler { return ZZ_filter_dataTaskWithURL_completion(self, _cmd, url, completionHandler); }
 @end
 
 void ZZInstallNetworkInterception(void) {
@@ -659,6 +712,18 @@ void ZZInstallNetworkInterception(void) {
         Method replacementSimple = class_getInstanceMethod(sessionCls, @selector(zz_filter_dataTaskWithRequest:));
         if (dataTaskSimple && replacementSimple) {
             method_exchangeImplementations(dataTaskSimple, replacementSimple);
+        }
+
+        Method dataTaskURLCompletion = class_getInstanceMethod(sessionCls, @selector(dataTaskWithURL:completionHandler:));
+        Method replacementURLCompletion = class_getInstanceMethod(sessionCls, @selector(zz_filter_dataTaskWithURL_completion:completionHandler:));
+        if (dataTaskURLCompletion && replacementURLCompletion) {
+            method_exchangeImplementations(dataTaskURLCompletion, replacementURLCompletion);
+        }
+
+        Method dataTaskURLSimple = class_getInstanceMethod(sessionCls, @selector(dataTaskWithURL:));
+        Method replacementURLSimple = class_getInstanceMethod(sessionCls, @selector(zz_filter_dataTaskWithURL:));
+        if (dataTaskURLSimple && replacementURLSimple) {
+            method_exchangeImplementations(dataTaskURLSimple, replacementURLSimple);
         }
 
         Method originalDefault = class_getClassMethod(cls, @selector(defaultSessionConfiguration));

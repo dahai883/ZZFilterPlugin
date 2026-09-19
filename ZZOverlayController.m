@@ -333,6 +333,8 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     NSString *observed2xxVersion = ZZObservedDetailLast2xxVersion();
     NSUInteger observed2xxBytes = ZZObservedDetailLast2xxBytes();
     NSString *observed2xxContentType = ZZObservedDetailLast2xxContentType();
+    NSString *observed2xxURL = ZZObservedDetailLast2xxURL();
+    NSString *observed2xxBody = ZZObservedDetailLast2xxBody();
     NSUInteger detailResponses = ZZDetailHTTPResponses();
     NSUInteger detail2xx = ZZDetailHTTP2xxResponses();
     NSUInteger detailFailures = ZZDetailHTTPFailureResponses();
@@ -341,7 +343,7 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     NSUInteger detailPOSTForm = ZZDetailPOSTFormRequests();
     NSUInteger detailPOSTJSON = ZZDetailPOSTJSONRequests();
     return [NSString stringWithFormat:
-            @"插件：已加载\nUI Hook：%lu\nUI 调用：%lu\n处理商品：%lu\n隐藏商品：%lu\n网络拦截：%lu\n修改响应：%lu\n详情预取：%lu\n详情响应：%lu（2xx：%lu，失败：%lu）\n详情观察：%lu\n实际详情响应：%lu（2xx：%lu）\n实际版本解析：%lu\n实际最后状态：%ld\nAllow：%@\n最后2xx版本：%@（%lu bytes）\n2xx类型：%@\n详情请求：GET %lu / POST表单 %lu / POST JSON %lu\n最后HTTP状态：%ld\n详情命中：%lu",
+            @"插件：已加载\nUI Hook：%lu\nUI 调用：%lu\n处理商品：%lu\n隐藏商品：%lu\n网络拦截：%lu\n修改响应：%lu\n详情预取：%lu\n详情响应：%lu（2xx：%lu，失败：%lu）\n详情观察：%lu\n实际详情响应：%lu（2xx：%lu）\n实际版本解析：%lu\n实际最后状态：%ld\nAllow：%@\n最后2xx版本：%@（%lu bytes）\n2xx类型：%@\n最后2xx URL：%@\n最后2xx Body：%@\n详情请求：GET %lu / POST表单 %lu / POST JSON %lu\n最后HTTP状态：%ld\n详情命中：%lu",
             (unsigned long)hooks, (unsigned long)calls,
             (unsigned long)processed, (unsigned long)hidden,
             (unsigned long)network, (unsigned long)modified,
@@ -351,7 +353,7 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
             (unsigned long)observedDetailResponses, (unsigned long)observedDetail2xx,
             (unsigned long)observedDetailVersionMatches,
             (long)observedDetailLastStatus, observedDetailAllow ?: @"",
-            observed2xxVersion ?: @"", (unsigned long)observed2xxBytes, observed2xxContentType ?: @"",
+            observed2xxVersion ?: @"", (unsigned long)observed2xxBytes, observed2xxContentType ?: @"", observed2xxURL ?: @"", observed2xxBody ?: @"",
             (unsigned long)detailGET, (unsigned long)detailPOSTForm, (unsigned long)detailPOSTJSON,
             (long)detailLastStatus, (unsigned long)detailEntries];
 }

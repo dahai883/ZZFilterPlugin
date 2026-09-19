@@ -1,29 +1,12 @@
-# ZZFilterPlugin v50
+# ZZFilterPlugin v51
 
-Independent iOS system-version filtering plugin for authorized on-device testing.
+本版基于 v50 的实际测试结果继续修正。v50 已经观察到真实请求有 3 个 2xx 响应，其中最后状态 200、Content-Type 为 application/json，但实际版本解析仍为 0；同时大量请求返回 405。
 
-v50 continues from the first successful real-detail 2xx observations. It adds
-a whole-response version scan for opaque attribute keys, response-URL product-ID
-recovery, and a bounded response-level ID/version association when exactly one
-product ID is present. Diagnostics now expose actual version parses.
+## v51 重点
+- 新增 NSURLSession 的 `dataTaskWithURL:` / `dataTaskWithURL:completionHandler:` 观察路径，避免只覆盖 request 形式而漏掉真实详情请求。
+- 保留 GET / POST 表单 / POST JSON 三种受控请求统计。
+- 诊断面板新增最后一个 2xx 响应的 URL 与 Body 预览，便于定位真实详情响应结构。
+- 继续限制观察数量和递归深度，不恢复全局运行时扫描，避免历史高 CPU/内存问题。
+- 加强源码结构检查：所有私有 selector/helper 在首次使用前声明；所有新增导出函数同时有 `.h` 声明和 `.m` 定义。
 
-The implementation keeps bounded traversal and avoids global runtime enumeration.
-Source checks remain enabled for Objective-C declaration order, selector
-declarations, literals, and implementation structure before CI builds.
-
-
-## v50 compile fix
-- Fixes an undeclared-function call in `ZZNetworkInterception.m`.
-- Uses a locally declared/defined response-text parser so Objective-C ARC does not infer an `int` return type.
-- Adds a source-structure guard for this class of missing static helper declarations.
-
-
-## v50
-
-针对 v48：实际详情响应存在 2xx，但实际版本解析仍为 0。v50 增加原始 2xx 响应的 UTF-8/UTF-16 版本扫描，并在状态面板显示最后一个 2xx 的版本、字节数和 Content-Type；若解析到版本且能取得商品 ID，会直接建立商品-系统版本关联。
-
-
-## v50
-- Fixed linker errors for the v49 diagnostic exports: ZZObservedDetailLast2xxVersion/Bytes/ContentType are now defined in ZZNetworkInterception.m and exported in the header.
-- Added a source-level regression check for exported diagnostic declarations/definitions so these symbols cannot be referenced without a definition in future versions.
-- The unused helper warning is non-fatal and does not block linking.
+目标仍是独立的“系统版本”筛选与诊断，不修改转转账号、授权或安全机制。
