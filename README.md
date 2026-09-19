@@ -1,12 +1,25 @@
-# ZZFilterPlugin v51
+# ZZFilterPlugin v52
 
-本版基于 v50 的实际测试结果继续修正。v50 已经观察到真实请求有 3 个 2xx 响应，其中最后状态 200、Content-Type 为 application/json，但实际版本解析仍为 0；同时大量请求返回 405。
+本版基于 v51 的实际注入结果继续调整。v51 已确认 `https://lego.zhuanzhuan.com/v1/coke-real` 会返回 200，但它只是一个成功消息响应，不应被当作“详情 2xx”；与此同时真正的详情请求大量出现 405。v52 因此把诊断从“主动复制请求”改成“只观察转转自己发出的请求/响应”。
 
-## v51 重点
-- 新增 NSURLSession 的 `dataTaskWithURL:` / `dataTaskWithURL:completionHandler:` 观察路径，避免只覆盖 request 形式而漏掉真实详情请求。
-- 保留 GET / POST 表单 / POST JSON 三种受控请求统计。
-- 诊断面板新增最后一个 2xx 响应的 URL 与 Body 预览，便于定位真实详情响应结构。
-- 继续限制观察数量和递归深度，不恢复全局运行时扫描，避免历史高 CPU/内存问题。
-- 加强源码结构检查：所有私有 selector/helper 在首次使用前声明；所有新增导出函数同时有 `.h` 声明和 `.m` 定义。
+## v52 重点
+- **取消详情主动复制请求**：不再为了探测详情而额外发起 GET/POST/表单/JSON 变体，避免额外 405、重复请求和诊断噪声。
+- **被动观察真实 App 请求**：通过 `NSURLSession` 的实际 task/completion 路径记录请求和响应；Apple 的 `NSURLSessionDataTask` 文档确认 completion handler 会收到 `NSData`、`NSURLResponse` 和 `NSError`，适合在不改变原请求的情况下观察结果。citeturn0search3
+- **排除 `/v1/coke-real`**：即使返回 2xx，也不会再进入“详情 2xx”候选。
+- **2xx 候选更严格**：只有详情路径、响应中出现系统版本/详情结构等证据时，才记录为候选 2xx。
+- **新增最后失败请求诊断**：面板显示最后一个 4xx/5xx 的 method、URL 和有限长度 Body，方便直接定位 405 到底发生在哪个 endpoint。
+- **保留系统版本解析**：真正的候选详情响应仍会走原有 JSON/文本/嵌套属性解析，并继续写入商品版本缓存。
+- **稳定性保护**：不恢复全局 runtime 扫描；观察数量有上限，响应 Body 预览有长度限制。
+- **编译前结构检查**：继续检查 Objective-C 声明顺序、导出函数 `.h/.m` 对应关系，并新增检查确保 v52 没有残留主动详情 observer。
 
-目标仍是独立的“系统版本”筛选与诊断，不修改转转账号、授权或安全机制。
+## 预期 v52 面板
+重点看这几行：
+- `详情观察：...（被动）`
+- `候选2xx URL：...`
+- `候选2xx Body：...`
+- `最后失败：METHOD URL`
+- `失败Body：...`
+- `实际版本解析：...`
+- `详情命中：...`
+
+如果再次出现 405，v52 应该直接把具体 405 URL 显示出来，而不会再把无关的 `/v1/coke-real` 200 当成详情响应。

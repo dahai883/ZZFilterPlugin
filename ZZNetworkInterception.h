@@ -23,5 +23,8 @@ FOUNDATION_EXPORT NSUInteger ZZObservedDetailLast2xxBytes(void);
 FOUNDATION_EXPORT NSString *ZZObservedDetailLast2xxContentType(void);
 FOUNDATION_EXPORT NSString *ZZObservedDetailLast2xxURL(void);
 FOUNDATION_EXPORT NSString *ZZObservedDetailLast2xxBody(void);
+FOUNDATION_EXPORT NSString *ZZObservedDetailLastFailureURL(void);
+FOUNDATION_EXPORT NSString *ZZObservedDetailLastFailureMethod(void);
+FOUNDATION_EXPORT NSString *ZZObservedDetailLastFailureBody(void);
 
 NS_ASSUME_NONNULL_END

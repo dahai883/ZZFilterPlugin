@@ -19,20 +19,24 @@ static NSUInteger gObservedDetailLast2xxBytes;
 static NSString *gObservedDetailLast2xxContentType;
 static NSString *gObservedDetailLast2xxURL;
 static NSString *gObservedDetailLast2xxBody;
+static NSString *gObservedDetailLastFailureURL;
+static NSString *gObservedDetailLastFailureMethod;
+static NSString *gObservedDetailLastFailureBody;
 static NSObject *gDetailCaptureLock;
 static NSObject *gObservedRequestLock;
 static __thread BOOL gZZInsideObserverRequest = NO;
-static const void *kZZObserverTaskKey = &kZZObserverTaskKey;
 static const void *kZZObservedTaskKey = &kZZObservedTaskKey;
 
 static void ZZEnsureDetailCaptureLock(void);
 static void ZZEnsureObservedRequestLock(void);
-static NSURLSession *ZZObserverSession(void);
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, SEL _cmd, NSURLRequest *request, void (^completion)(NSData *, NSURLResponse *, NSError *));
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest(id self, SEL _cmd, NSURLRequest *request);
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL(id self, SEL _cmd, NSURL *url);
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL_completion(id self, SEL _cmd, NSURL *url, void (^completion)(NSData *, NSURLResponse *, NSError *));
 static NSString *ZZExtractVersionFromFlatText(NSString *value);
+static void ZZRecordObservedDetailRequest(NSURLRequest *request);
+static BOOL ZZIsExcludedDetailResponseURL(NSURL *url);
+static BOOL ZZLooksLikeDetailResponse(NSURLRequest *request, NSURLResponse *response, NSData *data);
 
 // All private selectors/helpers are declared before first use.
 @interface NSURLSession (ZZFilterObserveForward)
@@ -106,6 +110,21 @@ NSString *ZZObservedDetailLast2xxURL(void) {
 NSString *ZZObservedDetailLast2xxBody(void) {
     ZZEnsureObservedRequestLock();
     @synchronized (gObservedRequestLock) { return gObservedDetailLast2xxBody.copy ?: @""; }
+}
+
+NSString *ZZObservedDetailLastFailureURL(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailLastFailureURL.copy ?: @""; }
+}
+
+NSString *ZZObservedDetailLastFailureMethod(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailLastFailureMethod.copy ?: @""; }
+}
+
+NSString *ZZObservedDetailLastFailureBody(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailLastFailureBody.copy ?: @""; }
 }
 
 static NSString *ZZExtractVersionFromFlatText(NSString *value) {
@@ -354,81 +373,131 @@ static NSString *ZZExtractVersionFromRawResponseData(NSData *data) {
     return @"";
 }
 
+static BOOL ZZIsExcludedDetailResponseURL(NSURL *url) {
+    NSString *path = url.path.lowercaseString ?: @"";
+    NSString *absolute = url.absoluteString.lowercaseString ?: @"";
+    return [path containsString:@"coke-real"] || [absolute containsString:@"/v1/coke-real"];
+}
+
+static BOOL ZZLooksLikeDetailResponse(NSURLRequest *request, NSURLResponse *response, NSData *data) {
+    NSURL *url = response.URL ?: request.URL;
+    if (!url || ZZIsExcludedDetailResponseURL(url)) return NO;
+
+    // A response from an explicit detail/moreinfo endpoint is a candidate even
+    // when the payload does not expose the iOS value at the top level.
+    NSString *path = url.path.lowercaseString ?: @"";
+    BOOL detailPath = [path containsString:@"detail"] ||
+                      [path containsString:@"moreinfo"] ||
+                      [path containsString:@"waresshow"] ||
+                      [path containsString:@"goods"] ||
+                      [path containsString:@"item"];
+
+    if (data.length) {
+        id obj = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:NULL];
+        if (obj && ZZProductVersionFromObject(obj).length) return YES;
+
+        NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+        if (!text.length) text = [[NSString alloc] initWithData:data encoding:NSASCIIStringEncoding];
+        if (text.length && ZZExtractVersionFromFlatText(text).length) return YES;
+        if (text.length) {
+            NSString *lower = text.lowercaseString;
+            if ([lower containsString:@"系统版本"] || [lower containsString:@"systemversion"] ||
+                [lower containsString:@"iosversion"] || [lower containsString:@"iphoneosversion"]) {
+                return YES;
+            }
+        }
+    }
+    return detailPath;
+}
+
+static void ZZRecordObservedDetailRequest(NSURLRequest *request) {
+    if (!request || !request.URL || gZZInsideObserverRequest) return;
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) {
+        if (gObservedDetailRequests >= 48) return;
+        gObservedDetailRequests += 1;
+    }
+    ZZFilterDebugWrite(@"[ZZDetailObserver] observe-request method=%@ url=%@ pid=%@",
+                       request.HTTPMethod ?: @"GET",
+                       request.URL.absoluteString ?: @"",
+                       ZZProductIDFromRequest(request) ?: @"");
+}
+
 static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLResponse *response, NSError *error) {
     NSInteger status = [response isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)response).statusCode : 0;
     NSString *allow = @"";
-    if ([response isKindOfClass:NSHTTPURLResponse.class]) {
-        NSDictionary *headers = ((NSHTTPURLResponse *)response).allHeaderFields;
-        allow = headers[@"Allow"] ?: headers[@"allow"] ?: @"";
-    }
-    NSString *raw2xxVersion = (status >= 200 && status < 300) ? ZZExtractVersionFromRawResponseData(data) : @"";
     NSString *contentType = @"";
     if ([response isKindOfClass:NSHTTPURLResponse.class]) {
         NSDictionary *headers = ((NSHTTPURLResponse *)response).allHeaderFields;
+        allow = headers[@"Allow"] ?: headers[@"allow"] ?: @"";
         id ct = headers[@"Content-Type"] ?: headers[@"content-type"];
         if ([ct isKindOfClass:NSString.class]) contentType = ct;
-    }
-    ZZEnsureObservedRequestLock();
-    @synchronized (gObservedRequestLock) {
-        gObservedDetailResponses += 1;
-        gObservedDetailLastStatusCode = status;
-        gObservedDetailLastAllowHeader = allow.copy ?: @"";
-        if (status >= 200 && status < 300) {
-            gObservedDetail2xxResponses += 1;
-            gObservedDetailLast2xxVersion = raw2xxVersion.copy ?: @"";
-            gObservedDetailLast2xxBytes = data.length;
-            gObservedDetailLast2xxContentType = contentType.copy ?: @"";
-            gObservedDetailLast2xxURL = response.URL.absoluteString.copy ?: request.URL.absoluteString.copy ?: @"";
-            NSString *bodyText = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-            if (!bodyText.length) bodyText = [[NSString alloc] initWithData:data encoding:NSASCIIStringEncoding];
-            if (bodyText.length > 420) bodyText = [bodyText substringToIndex:420];
-            gObservedDetailLast2xxBody = bodyText.copy ?: @"";
-            if (raw2xxVersion.length) gObservedDetailVersionMatches += 1;
-        }
     }
 
     NSString *preview = @"";
     if (data.length) {
         NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
         if (!text.length) text = [[NSString alloc] initWithData:data encoding:NSASCIIStringEncoding];
-        if (text.length > 240) text = [text substringToIndex:240];
+        if (text.length > 420) text = [text substringToIndex:420];
         preview = text ?: @"";
     }
-    ZZFilterDebugWrite(@"[ZZDetailObserver] actual-response method=%@ status=%ld allow=%@ bytes=%lu pid=%@ body=%@ url=%@ error=%@",
-                       request.HTTPMethod ?: @"GET", (long)status, allow,
+
+    BOOL candidate2xx = (status >= 200 && status < 300) &&
+                       ZZLooksLikeDetailResponse(request, response, data);
+    NSString *raw2xxVersion = candidate2xx ? ZZExtractVersionFromRawResponseData(data) : @"";
+
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) {
+        gObservedDetailResponses += 1;
+        gObservedDetailLastStatusCode = status;
+        gObservedDetailLastAllowHeader = allow.copy ?: @"";
+
+        if (status >= 400 && status < 600) {
+            gObservedDetailLastFailureURL = (response.URL.absoluteString ?: request.URL.absoluteString ?: @"").copy;
+            gObservedDetailLastFailureMethod = (request.HTTPMethod ?: @"GET").copy;
+            gObservedDetailLastFailureBody = preview.copy ?: @"";
+        }
+
+        if (candidate2xx) {
+            gObservedDetail2xxResponses += 1;
+            gObservedDetailLast2xxVersion = raw2xxVersion.copy ?: @"";
+            gObservedDetailLast2xxBytes = data.length;
+            gObservedDetailLast2xxContentType = contentType.copy ?: @"";
+            gObservedDetailLast2xxURL = response.URL.absoluteString.copy ?: request.URL.absoluteString.copy ?: @"";
+            gObservedDetailLast2xxBody = preview.copy ?: @"";
+            if (raw2xxVersion.length) gObservedDetailVersionMatches += 1;
+        }
+    }
+
+    ZZFilterDebugWrite(@"[ZZDetailObserver] actual-response method=%@ status=%ld candidate2xx=%@ allow=%@ bytes=%lu pid=%@ body=%@ url=%@ error=%@",
+                       request.HTTPMethod ?: @"GET", (long)status, candidate2xx ? @"YES" : @"NO", allow,
                        (unsigned long)data.length, ZZProductIDFromRequest(request), preview,
                        request.URL.absoluteString ?: @"", error.localizedDescription ?: @"none");
 
-    if (error || !data.length || status < 200 || status >= 300) return;
+    if (error || !data.length || status < 200 || status >= 300 || !candidate2xx) return;
+
     NSString *requestPIDForRaw = ZZProductIDFromRequest(request);
     if (!requestPIDForRaw.length) requestPIDForRaw = ZZProductIDFromResponseURL(response.URL);
     if (raw2xxVersion.length && requestPIDForRaw.length) {
-        ZZRecordCapturedEntry(@{ @"detailText": [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"", @"zzSystemVersion": raw2xxVersion }, requestPIDForRaw);
+        NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+        ZZRecordCapturedEntry(@{ @"detailText": text, @"zzSystemVersion": raw2xxVersion }, requestPIDForRaw);
     }
+
     id obj = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:NULL];
     if (!obj) {
         NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
         if (text.length) {
             NSString *direct = ZZProductVersionFromDictionary(@{ @"content": text });
-            if (direct.length) {
-                NSString *pid = ZZProductIDFromRequest(request);
-                if (pid.length) {
-                    NSDictionary *entry = @{ @"productId": pid, @"detailText": text, @"zzSystemVersion": direct };
-                    [[ZZProductVisibility shared] recordEntries:@[entry] forProductIDs:@[pid]];
-                    ZZEnsureDetailCaptureLock();
-                    @synchronized (gDetailCaptureLock) { gDetailCapturedEntries += 1; }
-                }
+            if (direct.length && requestPIDForRaw.length) {
+                ZZRecordCapturedEntry(@{ @"productId": requestPIDForRaw, @"detailText": text, @"zzSystemVersion": direct }, requestPIDForRaw);
             }
         }
         return;
     }
-    NSUInteger before = ZZDetailCapturedEntries();
-    NSString *requestPID = ZZProductIDFromRequest(request);
-    if (!requestPID.length) requestPID = ZZProductIDFromResponseURL(response.URL);
 
-    // v47: perform a whole-response identity/version pass before the structural
-    // association. This covers payloads where the ID and "iOS 18.7.7" live in
-    // sibling branches rather than the same dictionary.
+    NSUInteger before = ZZDetailCapturedEntries();
+    NSString *requestPID = requestPIDForRaw;
+
     NSMutableSet<NSString *> *candidateIDs = [NSMutableSet set];
     ZZCollectExplicitProductIDs(obj, candidateIDs, 0);
     NSString *wholeResponseVersion = ZZProductVersionFromObject(obj);
@@ -437,16 +506,10 @@ static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLRe
         NSString *flatText = flat.length ? [[NSString alloc] initWithData:flat encoding:NSUTF8StringEncoding] : @"";
         wholeResponseVersion = ZZExtractVersionFromFlatText(flatText);
     }
-    if (wholeResponseVersion.length) {
-        ZZEnsureObservedRequestLock();
-        @synchronized (gObservedRequestLock) { gObservedDetailVersionMatches += 1; }
-    }
 
     NSUInteger captured = ZZCaptureActualDetailResponse(obj, requestPID, 0);
     NSUInteger after = ZZDetailCapturedEntries();
 
-    // If there is exactly one explicit product identity in the whole response,
-    // it is safe to bind the response-level system version to that product.
     if (captured == 0 && wholeResponseVersion.length && !requestPID.length && candidateIDs.count == 1) {
         NSString *pid = candidateIDs.anyObject;
         ZZRecordCapturedEntry(@{ @"detail": obj, @"zzSystemVersion": wholeResponseVersion }, pid);
@@ -463,30 +526,11 @@ static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLRe
                            wholeResponseVersion ?: @"", requestPID ?: @"", (unsigned long)candidateIDs.count,
                            (unsigned long)(after-before));
     }
-    if (after > before) ZZFilterDebugWrite(@"[ZZDetailObserver] captured=%lu method=%@ status=%ld pid=%@ url=%@", (unsigned long)(after-before), request.HTTPMethod ?: @"GET", (long)status, ZZProductIDFromRequest(request), request.URL.absoluteString ?: @"");
-}
-
-
-static void ZZStartObserverForRequest(NSURLRequest *request) {
-    if (!request || gZZInsideObserverRequest || !ZZLooksLikeDetailRequest(request)) return;
-    ZZEnsureObservedRequestLock();
-    @synchronized (gObservedRequestLock) {
-        if (gObservedDetailRequests >= 24) return;
-        gObservedDetailRequests += 1;
-    }
-    NSMutableURLRequest *copyMutable = [request mutableCopy];
-    [copyMutable setValue:@"1" forHTTPHeaderField:@"X-ZZFilter-Observer"];
-    NSURLRequest *copy = copyMutable.copy;
-    NSURLSession *observer = ZZObserverSession();
-    BOOL previousGuard = gZZInsideObserverRequest;
-    gZZInsideObserverRequest = YES;
-    NSURLSessionDataTask *observerTask = [observer zz_filter_dataTaskWithRequest_completion:copy completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-        ZZObserveDetailResponse(copy, data, response, error);
-    }];
-    gZZInsideObserverRequest = previousGuard;
-    if (observerTask) {
-        objc_setAssociatedObject(observerTask, kZZObserverTaskKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        [observerTask resume];
+    if (after > before) {
+        ZZFilterDebugWrite(@"[ZZDetailObserver] captured=%lu method=%@ status=%ld pid=%@ url=%@",
+                           (unsigned long)(after-before), request.HTTPMethod ?: @"GET",
+                           (long)status, ZZProductIDFromRequest(request),
+                           request.URL.absoluteString ?: @"");
     }
 }
 
@@ -498,30 +542,12 @@ static void ZZMarkTaskObserved(NSURLSessionDataTask *task) {
     if (task) objc_setAssociatedObject(task, kZZObservedTaskKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-static BOOL ZZIsObserverTask(NSURLSessionTask *task) {
-    return task && objc_getAssociatedObject(task, kZZObserverTaskKey) != nil;
-}
-
 static void ZZInspectTaskForDetail(NSURLSessionDataTask *task) {
-    if (!task || ZZIsObserverTask(task) || ZZTaskWasObserved(task)) return;
+    if (!task || ZZTaskWasObserved(task)) return;
     NSURLRequest *request = task.originalRequest ?: task.currentRequest;
     if (!request || !ZZLooksLikeDetailRequest(request)) return;
     ZZMarkTaskObserved(task);
-    ZZFilterDebugWrite(@"[ZZDetailObserver] task-created method=%@ url=%@ pid=%@", request.HTTPMethod ?: @"GET", request.URL.absoluteString ?: @"", ZZProductIDFromRequest(request));
-    ZZStartObserverForRequest(request);
-}
-
-
-static NSURLSession *ZZObserverSession(void) {
-    static NSURLSession *session;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        NSURLSessionConfiguration *cfg = [NSURLSessionConfiguration ephemeralSessionConfiguration];
-        cfg.protocolClasses = @[];
-        cfg.HTTPCookieStorage = NSHTTPCookieStorage.sharedHTTPCookieStorage;
-        session = [NSURLSession sessionWithConfiguration:cfg];
-    });
-    return session;
+    ZZRecordObservedDetailRequest(request);
 }
 
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, SEL _cmd, NSURLRequest *request, void (^completion)(NSData *, NSURLResponse *, NSError *)) {
@@ -529,9 +555,8 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, S
     if (!request) return [(NSURLSession *)self zz_filter_dataTaskWithRequest_completion:request completionHandler:completion];
 
     BOOL isDetail = ZZLooksLikeDetailRequest(request);
-    BOOL isInternalObserver = [[request valueForHTTPHeaderField:@"X-ZZFilter-Observer"] isEqualToString:@"1"];
     void (^wrappedCompletion)(NSData *, NSURLResponse *, NSError *) = completion;
-    if (isDetail && !isInternalObserver) {
+    if (isDetail && !gZZInsideObserverRequest) {
         void (^originalCompletion)(NSData *, NSURLResponse *, NSError *) = [completion copy];
         NSURLRequest *observedRequest = request.copy;
         wrappedCompletion = ^(NSData *data, NSURLResponse *response, NSError *error) {
@@ -539,22 +564,19 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, S
             if (originalCompletion) originalCompletion(data, response, error);
         };
     }
-    NSURLSessionDataTask *task = [(NSURLSession *)self zz_filter_dataTaskWithRequest_completion:request completionHandler:wrappedCompletion];
-    if (!gZZInsideObserverRequest && isDetail) ZZStartObserverForRequest(request);
-    return task;
+    return [(NSURLSession *)self zz_filter_dataTaskWithRequest_completion:request completionHandler:wrappedCompletion];
 }
 
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest(id self, SEL _cmd, NSURLRequest *request) {
     (void)_cmd;
     if (!request) return [(NSURLSession *)self zz_filter_dataTaskWithRequest:request];
-    NSURLSessionDataTask *task = [(NSURLSession *)self zz_filter_dataTaskWithRequest:request];
-    if (!gZZInsideObserverRequest && ZZLooksLikeDetailRequest(request)) ZZStartObserverForRequest(request);
-    return task;
+    return [(NSURLSession *)self zz_filter_dataTaskWithRequest:request];
 }
 
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL_completion(id self, SEL _cmd, NSURL *url, void (^completion)(NSData *, NSURLResponse *, NSError *)) {
     (void)_cmd;
     if (!url) return [(NSURLSession *)self zz_filter_dataTaskWithURL_completion:url completionHandler:completion];
+
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
     BOOL isDetail = ZZLooksLikeDetailRequest(request);
     if (isDetail && !gZZInsideObserverRequest) {
@@ -564,7 +586,6 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL_completion(id self, SEL _
             ZZObserveDetailResponse(observedRequest, data, response, error);
             if (originalCompletion) originalCompletion(data, response, error);
         };
-        ZZStartObserverForRequest(request);
     }
     return [(NSURLSession *)self zz_filter_dataTaskWithURL_completion:url completionHandler:completion];
 }
@@ -572,25 +593,17 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL_completion(id self, SEL _
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL(id self, SEL _cmd, NSURL *url) {
     (void)_cmd;
     if (!url) return [(NSURLSession *)self zz_filter_dataTaskWithURL:url];
-    NSURLSessionDataTask *task = [(NSURLSession *)self zz_filter_dataTaskWithURL:url];
-    if (!gZZInsideObserverRequest) {
-        NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
-        if (ZZLooksLikeDetailRequest(request)) ZZStartObserverForRequest(request);
-    }
-    return task;
+    return [(NSURLSession *)self zz_filter_dataTaskWithURL:url];
 }
-
 
 @implementation NSURLSessionTask (ZZFilterResumeObserve)
 - (void)zz_filter_resume {
-    BOOL isObserver = ZZIsObserverTask(self);
     [self zz_filter_resume];
-    if (!isObserver && [self isKindOfClass:NSURLSessionDataTask.class]) {
+    if ([self isKindOfClass:NSURLSessionDataTask.class]) {
         ZZInspectTaskForDetail((NSURLSessionDataTask *)self);
     }
 }
 @end
-
 
 static void ZZEnsureCookieRegistry(void) {
     static dispatch_once_t onceToken;

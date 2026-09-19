@@ -3,10 +3,9 @@ import re, sys
 
 root = Path(__file__).resolve().parent
 fail = False
+
 for p in root.glob('*.m'):
     text = p.read_text(errors='replace')
-    # Basic directive balance. This is intentionally conservative: it catches
-    # premature/missing @end mistakes without pretending to be a full compiler.
     impls = len(re.findall(r'^\s*@implementation\b', text, re.M))
     ends = len(re.findall(r'^\s*@end\s*$', text, re.M))
     if p.name == 'ZZOverlayController.m':
@@ -14,80 +13,104 @@ for p in root.glob('*.m'):
             print(f'FAIL {p.name}: expected 3 implementations / 6 @end, got {impls}/{ends}')
             fail = True
         s = text
-        outer_end = s.find('\n@end', s.find('@implementation ZZOverlayController'))
+        outer_start = s.find('@implementation ZZOverlayController')
+        outer_end = s.find('\n@end', outer_start)
         results_impl = s.find('@implementation ZZVersionResultsController')
         show = s.find('- (void)showVersionResultsFrom:')
         present = s.find('- (void)presentSettingsFrom:')
         refresh = s.find('- (void)refreshButton')
         cell_iface = s.find('@interface ZZVersionResultCell')
-        if not (outer_end >= 0 and show >= 0 and present >= 0 and refresh >= 0 and show < outer_end and present < outer_end and refresh < outer_end and results_impl > outer_end and cell_iface > outer_end):
+        if not (outer_start >= 0 and outer_end >= 0 and show >= 0 and present >= 0 and refresh >= 0 and show < outer_end and present < outer_end and refresh < outer_end and results_impl > outer_end and cell_iface > outer_end):
             print('FAIL ZZOverlayController.m: outer controller methods are not inside the outer implementation')
             fail = True
     print(f'CHECK {p.name}: implementations={impls}, @end={ends}')
 
-# Cross-file declaration sanity checks for class singleton calls. This catches the
-# exact v25 failure ([ZZDetailFetcher shared]) before GitHub Actions does.
 headers = "\n".join(x.read_text(errors="replace") for x in root.glob("*.h"))
 impl_text = "\n".join(x.read_text(errors="replace") for x in root.glob("*.m"))
+
 for cls in ["ZZDetailFetcher", "ZZProductVisibility", "ZZSettings", "ZZOverlayController"]:
     if f"[{cls} shared]" in impl_text and f"+ (instancetype)shared;" not in headers and f"+ (id)shared;" not in headers:
         print(f"FAIL missing +shared declaration for {cls}")
         fail = True
+
 if '@["' in impl_text:
-    print("FAIL malformed Objective-C array literal token @[\" detected")
+    print('FAIL malformed Objective-C array literal token @[\" detected')
     fail = True
 
-# The v49 diagnostic getters must have both declarations and concrete definitions.
 net = (root / 'ZZNetworkInterception.m').read_text(errors='replace')
-net_header = (root / "ZZNetworkInterception.h").read_text(errors="replace")
+net_header = (root / "ZZNetworkInterception.h").read_text(errors='replace')
+
 for decl in [
     "FOUNDATION_EXPORT NSString *ZZObservedDetailLast2xxVersion(void);",
     "FOUNDATION_EXPORT NSUInteger ZZObservedDetailLast2xxBytes(void);",
     "FOUNDATION_EXPORT NSString *ZZObservedDetailLast2xxContentType(void);",
+    "FOUNDATION_EXPORT NSString *ZZObservedDetailLast2xxURL(void);",
+    "FOUNDATION_EXPORT NSString *ZZObservedDetailLast2xxBody(void);",
+    "FOUNDATION_EXPORT NSString *ZZObservedDetailLastFailureURL(void);",
+    "FOUNDATION_EXPORT NSString *ZZObservedDetailLastFailureMethod(void);",
+    "FOUNDATION_EXPORT NSString *ZZObservedDetailLastFailureBody(void);",
 ]:
     if decl not in net_header:
         print(f"FAIL ZZNetworkInterception.h: missing export declaration: {decl}")
         fail = True
+
 for definition in [
     "NSString *ZZObservedDetailLast2xxVersion(void) {",
     "NSUInteger ZZObservedDetailLast2xxBytes(void) {",
     "NSString *ZZObservedDetailLast2xxContentType(void) {",
+    "NSString *ZZObservedDetailLast2xxURL(void) {",
+    "NSString *ZZObservedDetailLast2xxBody(void) {",
+    "NSString *ZZObservedDetailLastFailureURL(void) {",
+    "NSString *ZZObservedDetailLastFailureMethod(void) {",
+    "NSString *ZZObservedDetailLastFailureBody(void) {",
 ]:
     if definition not in net:
         print(f"FAIL ZZNetworkInterception.m: missing exported definition: {definition}")
         fail = True
 
-# v43 regression guard: private NSURLSession selectors and static helpers must be
-# declared before their first call. Clang otherwise reports either a missing
-# selector or "static declaration follows non-static declaration".
-# v48 regression guard: helpers used from ZZNetworkInterception.m must have an
-# early prototype and a local static definition.
-if 'ZZExtractVersionFromFlatText(' in net:
-    if 'static NSString *ZZExtractVersionFromFlatText(NSString *value);' not in net:
-        print('FAIL ZZNetworkInterception.m: missing early declaration for ZZExtractVersionFromFlatText')
-        fail = True
-    if 'static NSString *ZZExtractVersionFromFlatText(NSString *value) {' not in net:
-        print('FAIL ZZNetworkInterception.m: missing local definition for ZZExtractVersionFromFlatText')
-        fail = True
+# v52: all private selectors/helpers are declared before their first use.
 required_decls = [
     '@interface NSURLSession (ZZFilterObserveForward)',
     '@interface NSURLSessionTask (ZZFilterResumeObserve)',
-    'static NSURLSession *ZZObserverSession(void);',
     'static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(',
     'static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest(id self, SEL _cmd, NSURLRequest *request);',
+    'static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL_completion(',
+    'static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL(id self, SEL _cmd, NSURL *url);',
+    'static NSString *ZZExtractVersionFromFlatText(NSString *value);',
+    'static void ZZRecordObservedDetailRequest(NSURLRequest *request);',
+    'static BOOL ZZLooksLikeDetailResponse(NSURLRequest *request, NSURLResponse *response, NSData *data);',
 ]
 for decl in required_decls:
     if net.find(decl) < 0:
-        print(f'FAIL ZZNetworkInterception.m: missing early declaration: {decl}')
+        print(f'FAIL ZZNetworkInterception.m: missing declaration: {decl}')
         fail = True
 
-# The first runtime call must occur after the declarations block.
-decl_end = max(net.find('@interface NSURLSessionTask (ZZFilterResumeObserve)'),
-               net.find('@end', net.find('@interface NSURLSessionTask (ZZFilterResumeObserve)')))
-for token in ['ZZObserverSession()', '[observer zz_filter_dataTaskWithRequest_completion:', '[observer zz_filter_dataTaskWithRequest:']:
-    pos = net.find(token)
-    if pos >= 0 and pos < decl_end:
-        print(f'FAIL ZZNetworkInterception.m: first use precedes declarations: {token}')
+# v52 must be passive: no duplicated observer session or active observer request.
+for forbidden in [
+    'ZZObserverSession',
+    'kZZObserverTaskKey',
+    'ZZStartObserverForRequest',
+    'ZZIsObserverTask',
+    'observerTask',
+]:
+    if forbidden in net:
+        print(f'FAIL ZZNetworkInterception.m: active observer residue detected: {forbidden}')
+        fail = True
+
+# Ensure the exclusion for the known non-detail 2xx endpoint is present.
+if 'coke-real' not in net or 'ZZIsExcludedDetailResponseURL' not in net:
+    print('FAIL ZZNetworkInterception.m: missing coke-real 2xx exclusion')
+    fail = True
+
+# Ensure failure diagnostics are actually written.
+for token in [
+    'gObservedDetailLastFailureURL',
+    'gObservedDetailLastFailureMethod',
+    'gObservedDetailLastFailureBody',
+    'status >= 400 && status < 600',
+]:
+    if token not in net:
+        print(f'FAIL ZZNetworkInterception.m: missing failure diagnostic token: {token}')
         fail = True
 
 if fail:
