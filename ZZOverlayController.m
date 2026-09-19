@@ -323,7 +323,6 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     NSUInteger network = ZZNetworkInterceptedRequests();
     NSUInteger modified = ZZNetworkModifiedResponses();
     NSUInteger detailRequests = ZZDetailPrefetchRequests();
-    NSUInteger detailEntries = ZZDetailPrefetchEntries() + ZZDetailCapturedEntries();
     NSUInteger observedDetailRequests = ZZObservedDetailRequests();
     NSUInteger observedDetailResponses = ZZObservedDetailResponses();
     NSUInteger observedDetail2xx = ZZObservedDetail2xxResponses();
@@ -345,21 +344,74 @@ static const NSInteger ZZOverlayButtonTag = 0x5A5A01;
     NSUInteger detailGET = ZZDetailGETRequests();
     NSUInteger detailPOSTForm = ZZDetailPOSTFormRequests();
     NSUInteger detailPOSTJSON = ZZDetailPOSTJSONRequests();
+    NSUInteger detailEntries = ZZDetailPrefetchEntries() + ZZDetailCapturedEntries();
+
+    // Keep the main diagnostic sheet compact enough to fit on one iPhone
+    // screenshot. Full response bodies are intentionally reduced to a short
+    // preview; the detailed values remain available in the runtime log.
+    NSString *failurePath = observedFailureURL.length ? observedFailureURL : @"-";
+    NSURL *failureURL = [NSURL URLWithString:failurePath];
+    if (failureURL.path.length) failurePath = failureURL.path;
+    if (failurePath.length > 56) failurePath = [[failurePath substringToIndex:56] stringByAppendingString:@"…"];
+
+    NSString *candidatePath = observed2xxURL.length ? observed2xxURL : @"-";
+    NSURL *candidateURL = [NSURL URLWithString:candidatePath];
+    if (candidateURL.path.length) candidatePath = candidateURL.path;
+    if (candidatePath.length > 56) candidatePath = [[candidatePath substringToIndex:56] stringByAppendingString:@"…"];
+
+    NSString *failurePreview = observedFailureBody.length ? observedFailureBody : @"-";
+    failurePreview = [[failurePreview stringByReplacingOccurrencesOfString:@"\n" withString:@" "]
+                       stringByReplacingOccurrencesOfString:@"\r" withString:@" "];
+    if (failurePreview.length > 72) failurePreview = [[failurePreview substringToIndex:72] stringByAppendingString:@"…"];
+
+    NSString *candidatePreview = observed2xxBody.length ? observed2xxBody : @"-";
+    candidatePreview = [[candidatePreview stringByReplacingOccurrencesOfString:@"\n" withString:@" "]
+                        stringByReplacingOccurrencesOfString:@"\r" withString:@" "];
+    if (candidatePreview.length > 72) candidatePreview = [[candidatePreview substringToIndex:72] stringByAppendingString:@"…"];
+
+    NSString *candidateLine = observed2xxURL.length
+        ? [NSString stringWithFormat:@"候选2xx：%@ / %@ (%luB)", candidatePath, observed2xxContentType ?: @"-", (unsigned long)observed2xxBytes]
+        : @"候选2xx：无";
+    NSString *failureLine = observedFailureURL.length
+        ? [NSString stringWithFormat:@"最后失败：%@ %ld / %@", observedFailureMethod ?: @"?", (long)observedDetailLastStatus, failurePath]
+        : @"最后失败：无";
+
     return [NSString stringWithFormat:
-            @"插件：已加载\nUI Hook：%lu\nUI 调用：%lu\n处理商品：%lu\n隐藏商品：%lu\n网络拦截：%lu\n修改响应：%lu\n详情预取：%lu\n详情响应：%lu（2xx：%lu，失败：%lu）\n详情观察：%lu（被动）\n实际详情响应：%lu（候选2xx：%lu）\n实际版本解析：%lu\n实际最后状态：%ld\nAllow：%@\n候选2xx版本：%@（%lu bytes）\n候选2xx类型：%@\n候选2xx URL：%@\n候选2xx Body：%@\n最后失败：%@ %@\n失败Body：%@\n详情请求：GET %lu / POST表单 %lu / POST JSON %lu\n最后HTTP状态：%ld\n详情命中：%lu",
+            @"插件已加载\n"
+             "UI：Hook %lu / 调用 %lu\n"
+             "商品：处理 %lu / 隐藏 %lu\n"
+             "网络：拦截 %lu / 修改 %lu\n"
+             "详情：预取 %lu / 观察 %lu / 响应 %lu\n"
+             "响应：2xx %lu / 失败 %lu / 最近 %ld\n"
+             "版本：解析 %lu / 命中 %lu\n"
+             "请求：GET %lu / 表单 %lu / JSON %lu\n"
+             "最后HTTP：%ld\n"
+             "%@\n"
+             "Allow：%@\n"
+             "%@\n"
+             "候选版本：%@ (%luB)\n"
+             "候选Body：%@\n"
+             "%@\n"
+             "失败Body：%@",
             (unsigned long)hooks, (unsigned long)calls,
             (unsigned long)processed, (unsigned long)hidden,
             (unsigned long)network, (unsigned long)modified,
-            (unsigned long)detailRequests, (unsigned long)detailResponses,
-            (unsigned long)detail2xx, (unsigned long)detailFailures,
+            (unsigned long)detailRequests,
             (unsigned long)observedDetailRequests,
-            (unsigned long)observedDetailResponses, (unsigned long)observedDetail2xx,
+            (unsigned long)observedDetailResponses,
+            (unsigned long)observedDetail2xx,
+            (unsigned long)detailFailures,
+            (long)observedDetailLastStatus,
             (unsigned long)observedDetailVersionMatches,
-            (long)observedDetailLastStatus, observedDetailAllow ?: @"",
-            observed2xxVersion ?: @"", (unsigned long)observed2xxBytes, observed2xxContentType ?: @"", observed2xxURL ?: @"", observed2xxBody ?: @"",
-            observedFailureMethod ?: @"", observedFailureURL ?: @"", observedFailureBody ?: @"",
             (unsigned long)detailGET, (unsigned long)detailPOSTForm, (unsigned long)detailPOSTJSON,
-            (long)detailLastStatus, (unsigned long)detailEntries];
+            (long)detailLastStatus,
+            failureLine,
+            observedDetailAllow ?: @"-",
+            candidateLine,
+            observed2xxVersion.length ? observed2xxVersion : @"-",
+            (unsigned long)observed2xxBytes,
+            candidatePreview,
+            failurePreview];
 }
 
 - (void)showDiagnosticsFrom:(UIViewController *)vc {
