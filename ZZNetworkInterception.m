@@ -14,6 +14,9 @@ static NSUInteger gObservedDetail2xxResponses;
 static NSUInteger gObservedDetailVersionMatches;
 static NSInteger gObservedDetailLastStatusCode;
 static NSString *gObservedDetailLastAllowHeader;
+static NSString *gObservedDetailLast2xxVersion;
+static NSUInteger gObservedDetailLast2xxBytes;
+static NSString *gObservedDetailLast2xxContentType;
 static NSObject *gDetailCaptureLock;
 static NSObject *gObservedRequestLock;
 static __thread BOOL gZZInsideObserverRequest = NO;
@@ -296,6 +299,30 @@ static NSUInteger ZZCaptureActualDetailResponse(id obj, NSString *requestPID, NS
 }
 
 
+static NSString *ZZExtractVersionFromRawResponseData(NSData *data) {
+    if (!data.length) return @"";
+    NSMutableArray<NSString *> *texts = [NSMutableArray array];
+    NSString *utf8 = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (utf8.length) [texts addObject:utf8];
+    NSString *utf16 = [[NSString alloc] initWithData:data encoding:NSUTF16LittleEndianStringEncoding];
+    if (utf16.length) [texts addObject:utf16];
+    NSString *utf16be = [[NSString alloc] initWithData:data encoding:NSUTF16BigEndianStringEncoding];
+    if (utf16be.length) [texts addObject:utf16be];
+    for (NSString *text in texts) {
+        NSString *v = ZZExtractVersionFromFlatText(text);
+        if (v.length) return v;
+        NSRegularExpression *keyRe = [NSRegularExpression regularExpressionWithPattern:
+            @"(?i)(?:systemVersion|system_version|iosVersion|ios_version|iphoneOSVersion|osVersion|\\\"ios\\\"|\\\"systemVersion\\\")[^0-9]{0,100}(\\d{1,3}(?:\\.\\d{1,3}){0,2})"
+            options:0 error:NULL];
+        NSTextCheckingResult *m = [keyRe firstMatchInString:text options:0 range:NSMakeRange(0, text.length)];
+        if (m) {
+            NSRange r = [m rangeAtIndex:1];
+            if (r.location != NSNotFound) return [text substringWithRange:r];
+        }
+    }
+    return @"";
+}
+
 static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLResponse *response, NSError *error) {
     NSInteger status = [response isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)response).statusCode : 0;
     NSString *allow = @"";
@@ -303,12 +330,25 @@ static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLRe
         NSDictionary *headers = ((NSHTTPURLResponse *)response).allHeaderFields;
         allow = headers[@"Allow"] ?: headers[@"allow"] ?: @"";
     }
+    NSString *raw2xxVersion = (status >= 200 && status < 300) ? ZZExtractVersionFromRawResponseData(data) : @"";
+    NSString *contentType = @"";
+    if ([response isKindOfClass:NSHTTPURLResponse.class]) {
+        NSDictionary *headers = ((NSHTTPURLResponse *)response).allHeaderFields;
+        id ct = headers[@"Content-Type"] ?: headers[@"content-type"];
+        if ([ct isKindOfClass:NSString.class]) contentType = ct;
+    }
     ZZEnsureObservedRequestLock();
     @synchronized (gObservedRequestLock) {
         gObservedDetailResponses += 1;
         gObservedDetailLastStatusCode = status;
         gObservedDetailLastAllowHeader = allow.copy ?: @"";
-        if (status >= 200 && status < 300) gObservedDetail2xxResponses += 1;
+        if (status >= 200 && status < 300) {
+            gObservedDetail2xxResponses += 1;
+            gObservedDetailLast2xxVersion = raw2xxVersion.copy ?: @"";
+            gObservedDetailLast2xxBytes = data.length;
+            gObservedDetailLast2xxContentType = contentType.copy ?: @"";
+            if (raw2xxVersion.length) gObservedDetailVersionMatches += 1;
+        }
     }
 
     NSString *preview = @"";
@@ -324,6 +364,11 @@ static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLRe
                        request.URL.absoluteString ?: @"", error.localizedDescription ?: @"none");
 
     if (error || !data.length || status < 200 || status >= 300) return;
+    NSString *requestPIDForRaw = ZZProductIDFromRequest(request);
+    if (!requestPIDForRaw.length) requestPIDForRaw = ZZProductIDFromResponseURL(response.URL);
+    if (raw2xxVersion.length && requestPIDForRaw.length) {
+        ZZRecordCapturedEntry(@{ @"detailText": [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"", @"zzSystemVersion": raw2xxVersion }, requestPIDForRaw);
+    }
     id obj = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:NULL];
     if (!obj) {
         NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
