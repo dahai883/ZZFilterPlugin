@@ -18,8 +18,8 @@ FOUNDATION_EXPORT NSUInteger ZZObservedDetail2xxResponses(void);
 FOUNDATION_EXPORT NSUInteger ZZObservedDetailVersionMatches(void);
 FOUNDATION_EXPORT NSInteger ZZObservedDetailLastStatus(void);
 FOUNDATION_EXPORT NSString *ZZObservedDetailLastAllow(void);
-NSString *ZZObservedDetailLast2xxVersion(void);
-NSUInteger ZZObservedDetailLast2xxBytes(void);
-NSString *ZZObservedDetailLast2xxContentType(void);
+FOUNDATION_EXPORT NSString *ZZObservedDetailLast2xxVersion(void);
+FOUNDATION_EXPORT NSUInteger ZZObservedDetailLast2xxBytes(void);
+FOUNDATION_EXPORT NSString *ZZObservedDetailLast2xxContentType(void);
 
 NS_ASSUME_NONNULL_END

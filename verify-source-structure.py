@@ -37,10 +37,29 @@ if '@["' in impl_text:
     print("FAIL malformed Objective-C array literal token @[\" detected")
     fail = True
 
+# The v49 diagnostic getters must have both declarations and concrete definitions.
+net = (root / 'ZZNetworkInterception.m').read_text(errors='replace')
+net_header = (root / "ZZNetworkInterception.h").read_text(errors="replace")
+for decl in [
+    "FOUNDATION_EXPORT NSString *ZZObservedDetailLast2xxVersion(void);",
+    "FOUNDATION_EXPORT NSUInteger ZZObservedDetailLast2xxBytes(void);",
+    "FOUNDATION_EXPORT NSString *ZZObservedDetailLast2xxContentType(void);",
+]:
+    if decl not in net_header:
+        print(f"FAIL ZZNetworkInterception.h: missing export declaration: {decl}")
+        fail = True
+for definition in [
+    "NSString *ZZObservedDetailLast2xxVersion(void) {",
+    "NSUInteger ZZObservedDetailLast2xxBytes(void) {",
+    "NSString *ZZObservedDetailLast2xxContentType(void) {",
+]:
+    if definition not in net:
+        print(f"FAIL ZZNetworkInterception.m: missing exported definition: {definition}")
+        fail = True
+
 # v43 regression guard: private NSURLSession selectors and static helpers must be
 # declared before their first call. Clang otherwise reports either a missing
 # selector or "static declaration follows non-static declaration".
-net = (root / 'ZZNetworkInterception.m').read_text(errors='replace')
 # v48 regression guard: helpers used from ZZNetworkInterception.m must have an
 # early prototype and a local static definition.
 if 'ZZExtractVersionFromFlatText(' in net:

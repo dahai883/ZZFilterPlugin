@@ -77,6 +77,21 @@ NSString *ZZObservedDetailLastAllow(void) {
     @synchronized (gObservedRequestLock) { return gObservedDetailLastAllowHeader.copy ?: @""; }
 }
 
+NSString *ZZObservedDetailLast2xxVersion(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailLast2xxVersion.copy ?: @""; }
+}
+
+NSUInteger ZZObservedDetailLast2xxBytes(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailLast2xxBytes; }
+}
+
+NSString *ZZObservedDetailLast2xxContentType(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailLast2xxContentType.copy ?: @""; }
+}
+
 static NSString *ZZExtractVersionFromFlatText(NSString *value) {
     if (![value isKindOfClass:NSString.class] || value.length == 0) return @"";
 
