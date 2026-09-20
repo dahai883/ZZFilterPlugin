@@ -388,6 +388,10 @@ static NSString *ZZCompactDiagnosticURL(id value, NSUInteger maxLength) {
 
     NSString *failureURL = ZZCompactDiagnosticURL(ZZObservedDetailLastFailureURL(), 58);
     NSString *failureMethod = ZZCompactDiagnosticText(ZZObservedDetailLastFailureMethod(), 8);
+    NSString *lastObservedRequestURL = ZZCompactDiagnosticURL(ZZObservedDetailLastRequestURL(), 54);
+    NSString *lastObservedRequestMethod = ZZCompactDiagnosticText(ZZObservedDetailLastRequestMethod(), 8);
+    NSString *lastObservedRequestBody = ZZCompactDiagnosticText(ZZObservedDetailLastRequestBody(), 44);
+    NSString *lastObserved2xxBody = ZZCompactDiagnosticText(ZZObservedDetailLastObserved2xxBody(), 44);
     NSUInteger protocolDetailRequests = ZZProtocolDetailRequests();
     NSUInteger protocolDetailResponses = ZZProtocolDetailResponses();
     NSUInteger protocolDetail2xx = ZZProtocolDetail2xxResponses();
@@ -436,6 +440,18 @@ static NSString *ZZCompactDiagnosticURL(id value, NSUInteger maxLength) {
     [out appendFormat:@"观察2xx：%lu / 候选2xx：%lu\n",
                       (unsigned long)observedAny2xx,
                       (unsigned long)observedDetail2xx];
+    if (![lastObservedRequestURL isEqualToString:@"-"] && lastObservedRequestURL.length) {
+        [out appendFormat:@"观察最后：%@ %@\n", lastObservedRequestMethod, lastObservedRequestURL];
+        if (![lastObservedRequestBody isEqualToString:@"-"] && lastObservedRequestBody.length) {
+            [out appendFormat:@"请求Body：%@\n", lastObservedRequestBody];
+        }
+    }
+    if (![observedAny2xxURL isEqualToString:@"-"] && observedAny2xxURL.length) {
+        [out appendFormat:@"2xx最后：%@ %@\n", observedAny2xxMethod, observedAny2xxURL];
+        if (lastObserved2xxBody.length && ![lastObserved2xxBody isEqualToString:@"-"]) {
+            [out appendFormat:@"2xx摘要：%@\n", lastObserved2xxBody];
+        }
+    }
     [out appendFormat:@"协议详情：请求 %lu / 响应 %lu / 2xx %lu / 失败 %lu\n",
                       (unsigned long)protocolDetailRequests,
                       (unsigned long)protocolDetailResponses,

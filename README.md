@@ -1,4 +1,4 @@
-# ZZFilterPlugin v58
+# ZZFilterPlugin v60
 
 ## v58 透明观察诊断版
 - 保留 v56 的被动观察策略和紧凑状态栏。
@@ -21,3 +21,15 @@
 - Added protocol-level detail request/response counters and last status diagnostics.
 - Known `/v1/coke-real` 2xx remains excluded from detail candidates.
 - Debug popup remains compact; full URL/body stays in the debug log.
+
+
+## v60 changes
+- Keep v59 passive-only behavior: no synthetic detail requests and no new active probes.
+- Add direct diagnostics for the last observed detail request URL / method / body.
+- Show the last observed 2xx URL and body summary in the status popup so the actual network path can be identified without relying on an external log viewer.
+- Keep `/v1/coke-real` excluded from detail candidates.
+- No filtering rule is changed in this diagnostic step; the goal is to identify the real detail data path before parsing system version.
+- Source structure checks must pass before packaging.
+
+## v60 test focus
+Open the same product detail page and open the ZZFilterPlugin status. The important fields are `观察最后`, `2xx最后`, `2xx摘要`, and `协议详情`. If the 2xx URL is not the real product-detail endpoint, the next version can target the exact transport/path instead of generating more 405 requests.

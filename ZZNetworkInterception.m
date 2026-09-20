@@ -28,6 +28,9 @@ static NSUInteger gObservedDetailLastObserved2xxBytes;
 static NSString *gObservedDetailLastFailureURL;
 static NSString *gObservedDetailLastFailureMethod;
 static NSString *gObservedDetailLastFailureBody;
+static NSString *gObservedDetailLastRequestURL;
+static NSString *gObservedDetailLastRequestMethod;
+static NSString *gObservedDetailLastRequestBody;
 static NSUInteger gProtocolDetailRequests;
 static NSUInteger gProtocolDetailResponses;
 static NSUInteger gProtocolDetail2xxResponses;
@@ -51,6 +54,7 @@ static NSString *ZZExtractVersionFromFlatText(NSString *value);
 static void ZZRecordObservedDetailRequest(NSURLRequest *request);
 static BOOL ZZIsExcludedDetailResponseURL(NSURL *url);
 static BOOL ZZLooksLikeDetailResponse(NSURLRequest *request, NSURLResponse *response, NSData *data);
+static NSString *ZZProtocolBodyPreviewForDebug(NSData *data);
 
 // All private selectors/helpers are declared before first use.
 @interface NSURLSession (ZZFilterObserveForward)
@@ -84,6 +88,21 @@ NSUInteger ZZObservedDetailResponses(void) {
 NSUInteger ZZObservedDetailAny2xxResponses(void) {
     ZZEnsureObservedRequestLock();
     @synchronized (gObservedRequestLock) { return gObservedDetailAny2xxResponses; }
+}
+
+NSString *ZZObservedDetailLastRequestURL(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailLastRequestURL.copy ?: @""; }
+}
+
+NSString *ZZObservedDetailLastRequestMethod(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailLastRequestMethod.copy ?: @""; }
+}
+
+NSString *ZZObservedDetailLastRequestBody(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailLastRequestBody.copy ?: @""; }
 }
 
 NSString *ZZObservedDetailLastObserved2xxURL(void) {
@@ -470,11 +489,15 @@ static void ZZRecordObservedDetailRequest(NSURLRequest *request) {
     @synchronized (gObservedRequestLock) {
         if (gObservedDetailRequests >= 48) return;
         gObservedDetailRequests += 1;
+        gObservedDetailLastRequestURL = (request.URL.absoluteString ?: @"").copy;
+        gObservedDetailLastRequestMethod = (request.HTTPMethod ?: @"GET").copy;
+        gObservedDetailLastRequestBody = ZZProtocolBodyPreviewForDebug(request.HTTPBody).copy;
     }
-    ZZFilterDebugWrite(@"[ZZDetailObserver] observe-request method=%@ url=%@ pid=%@",
+    ZZFilterDebugWrite(@"[ZZDetailObserver] observe-request method=%@ url=%@ pid=%@ body=%@",
                        request.HTTPMethod ?: @"GET",
                        request.URL.absoluteString ?: @"",
-                       ZZProductIDFromRequest(request) ?: @"");
+                       ZZProductIDFromRequest(request) ?: @"",
+                       ZZProtocolBodyPreviewForDebug(request.HTTPBody));
 }
 
 static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLResponse *response, NSError *error) {
