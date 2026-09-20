@@ -11,6 +11,7 @@ static NSUInteger gDetailCapturedEntries;
 static NSUInteger gObservedDetailRequests;
 static NSUInteger gObservedDetailResponses;
 static NSUInteger gObservedDetail2xxResponses;
+static NSUInteger gObservedDetailAny2xxResponses;
 static NSUInteger gObservedDetailVersionMatches;
 static NSInteger gObservedDetailLastStatusCode;
 static NSString *gObservedDetailLastAllowHeader;
@@ -19,6 +20,11 @@ static NSUInteger gObservedDetailLast2xxBytes;
 static NSString *gObservedDetailLast2xxContentType;
 static NSString *gObservedDetailLast2xxURL;
 static NSString *gObservedDetailLast2xxBody;
+static NSString *gObservedDetailLastObserved2xxURL;
+static NSString *gObservedDetailLastObserved2xxMethod;
+static NSString *gObservedDetailLastObserved2xxBody;
+static NSString *gObservedDetailLastObserved2xxContentType;
+static NSUInteger gObservedDetailLastObserved2xxBytes;
 static NSString *gObservedDetailLastFailureURL;
 static NSString *gObservedDetailLastFailureMethod;
 static NSString *gObservedDetailLastFailureBody;
@@ -65,6 +71,36 @@ NSUInteger ZZObservedDetailRequests(void) {
 NSUInteger ZZObservedDetailResponses(void) {
     ZZEnsureObservedRequestLock();
     @synchronized (gObservedRequestLock) { return gObservedDetailResponses; }
+}
+
+NSUInteger ZZObservedDetailAny2xxResponses(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailAny2xxResponses; }
+}
+
+NSString *ZZObservedDetailLastObserved2xxURL(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailLastObserved2xxURL.copy ?: @""; }
+}
+
+NSString *ZZObservedDetailLastObserved2xxMethod(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailLastObserved2xxMethod.copy ?: @""; }
+}
+
+NSString *ZZObservedDetailLastObserved2xxBody(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailLastObserved2xxBody.copy ?: @""; }
+}
+
+NSString *ZZObservedDetailLastObserved2xxContentType(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailLastObserved2xxContentType.copy ?: @""; }
+}
+
+NSUInteger ZZObservedDetailLastObserved2xxBytes(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedDetailLastObserved2xxBytes; }
 }
 
 NSUInteger ZZObservedDetail2xxResponses(void) {
@@ -390,11 +426,17 @@ static BOOL ZZLooksLikeDetailResponse(NSURLRequest *request, NSURLResponse *resp
     // A response from an explicit detail/moreinfo endpoint is a candidate even
     // when the payload does not expose the iOS value at the top level.
     NSString *path = url.path.lowercaseString ?: @"";
+    NSString *requestPath = request.URL.path.lowercaseString ?: @"";
     BOOL detailPath = [path containsString:@"detail"] ||
                       [path containsString:@"moreinfo"] ||
                       [path containsString:@"waresshow"] ||
                       [path containsString:@"goods"] ||
-                      [path containsString:@"item"];
+                      [path containsString:@"item"] ||
+                      [requestPath containsString:@"detail"] ||
+                      [requestPath containsString:@"moreinfo"] ||
+                      [requestPath containsString:@"waresshow"] ||
+                      [requestPath containsString:@"goods"] ||
+                      [requestPath containsString:@"item"];
 
     if (data.length) {
         id obj = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:NULL];
@@ -457,6 +499,18 @@ static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLRe
         gObservedDetailLastStatusCode = status;
         gObservedDetailLastAllowHeader = allow.copy ?: @"";
 
+        // v57: keep the last *any* observed 2xx separately from the stricter
+        // detail candidate counter. This tells us exactly what the app itself
+        // returned even when the payload does not yet expose an iOS version.
+        if (status >= 200 && status < 300) {
+            gObservedDetailAny2xxResponses += 1;
+            gObservedDetailLastObserved2xxURL = (response.URL.absoluteString ?: request.URL.absoluteString ?: @"").copy;
+            gObservedDetailLastObserved2xxMethod = (request.HTTPMethod ?: @"GET").copy;
+            gObservedDetailLastObserved2xxBody = preview.copy ?: @"";
+            gObservedDetailLastObserved2xxContentType = contentType.copy ?: @"";
+            gObservedDetailLastObserved2xxBytes = data.length;
+        }
+
         if (status >= 400 && status < 600) {
             gObservedDetailLastFailureURL = (response.URL.absoluteString ?: request.URL.absoluteString ?: @"").copy;
             gObservedDetailLastFailureMethod = (request.HTTPMethod ?: @"GET").copy;
@@ -474,8 +528,9 @@ static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLRe
         }
     }
 
-    ZZFilterDebugWrite(@"[ZZDetailObserver] actual-response method=%@ status=%ld candidate2xx=%@ allow=%@ bytes=%lu pid=%@ body=%@ url=%@ error=%@",
-                       request.HTTPMethod ?: @"GET", (long)status, candidate2xx ? @"YES" : @"NO", allow,
+    ZZFilterDebugWrite(@"[ZZDetailObserver] actual-response method=%@ status=%ld candidate2xx=%@ any2xx=%@ allow=%@ bytes=%lu pid=%@ body=%@ url=%@ error=%@",
+                       request.HTTPMethod ?: @"GET", (long)status, candidate2xx ? @"YES" : @"NO",
+                       (status >= 200 && status < 300) ? @"YES" : @"NO", allow,
                        (unsigned long)data.length, ZZProductIDFromRequest(request), preview,
                        request.URL.absoluteString ?: @"", error.localizedDescription ?: @"none");
 

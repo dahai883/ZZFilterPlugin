@@ -1,12 +1,15 @@
-# ZZFilterPlugin v56
+# ZZFilterPlugin v57
 
-## v56 重点
-- 保留 v55 的单屏 Debug 状态栏。
-- 插件主动发出的详情探测请求增加 `X-ZZFilter-Internal-Detail: 1` 标记。
-- 被动详情观察器完全忽略插件自己的探测请求，避免把 405/重试统计成转转 App 的真实流量。
-- 详情预取改为每个商品只尝试一次 GET，不再连续尝试多个 POST/备用路径。
-- 目标是先获得转转 App 自己的真实详情请求/2xx 响应，再从真实响应关联系统版本。
-- 完整 URL/Body 仍写入 Debug 日志，状态栏只保留摘要。
+## v57 透明观察诊断版
+- 保留 v56 的被动观察策略和紧凑状态栏。
+- 新增“观察 2xx”独立统计：区分“App 实际返回的任意 2xx”和“通过详情候选判定的 2xx”。
+- 新增最后一个实际观察到的 2xx URL / Method / Body / Content-Type / 字节数诊断数据。
+- 详情候选判断同时参考 request URL 与 response URL，避免重定向或响应 URL 改变后被错误排除。
+- 状态栏增加 `观察2xx：N / 候选2xx：N`，若存在实际 2xx 同时显示其紧凑 URL。
+- 完整 Body 继续只写 Debug 日志，避免弹窗过长。
+- 不增加新的主动网络请求。
 
-## 注意
-当前构建环境未提供 iPhoneOS SDK，因此需通过 GitHub Actions 在目标 SDK 下完成最终 arm64/arm64e 编译。
+## 本版测试重点
+如果 `观察2xx` > 0 但 `候选2xx` 仍为 0，状态栏会直接显示最后一个实际 2xx URL；据此可继续定位真正的详情接口。
+
+当前环境未提供 iPhoneOS SDK，因此最终 arm64/arm64e 编译仍需通过 GitHub Actions 完成。

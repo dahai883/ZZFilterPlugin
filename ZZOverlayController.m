@@ -369,6 +369,9 @@ static NSString *ZZCompactDiagnosticURL(id value, NSUInteger maxLength) {
     NSUInteger observedDetailRequests = ZZObservedDetailRequests();
     NSUInteger observedDetailResponses = ZZObservedDetailResponses();
     NSUInteger observedDetail2xx = ZZObservedDetail2xxResponses();
+    NSUInteger observedAny2xx = ZZObservedDetailAny2xxResponses();
+    NSString *observedAny2xxURL = ZZCompactDiagnosticURL(ZZObservedDetailLastObserved2xxURL(), 52);
+    NSString *observedAny2xxMethod = ZZCompactDiagnosticText(ZZObservedDetailLastObserved2xxMethod(), 8);
     NSUInteger observedDetailVersionMatches = ZZObservedDetailVersionMatches();
     NSInteger observedDetailLastStatus = ZZObservedDetailLastStatus();
     NSString *observedDetailAllow = ZZCompactDiagnosticText(ZZObservedDetailLastAllow(), 18);
@@ -420,9 +423,14 @@ static NSString *ZZCompactDiagnosticURL(id value, NSUInteger maxLength) {
 
     // Keep the popup single-screen friendly. Detailed 2xx URL/body and full
     // failure HTML remain available in the debug log instead of the alert.
-    [out appendFormat:@"候选2xx：%lu / 观察状态 %ld\n",
-                      (unsigned long)observedDetail2xx,
-                      (long)observedDetailLastStatus];
+    [out appendFormat:@"观察2xx：%lu / 候选2xx：%lu\n",
+                      (unsigned long)observedAny2xx,
+                      (unsigned long)observedDetail2xx];
+    if (observedAny2xx > 0 && observedAny2xxURL.length) {
+        [out appendFormat:@"观察2xx：%@ %@\n", observedAny2xxMethod, observedAny2xxURL];
+    } else {
+        [out appendFormat:@"观察状态：%ld\n", (long)observedDetailLastStatus];
+    }
     [out appendString:@"完整 URL / Body：见 Debug 日志"];
 
     return out;
