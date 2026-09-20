@@ -326,6 +326,38 @@ static NSString *ZZCompactDiagnosticText(id value, NSUInteger maxLength) {
     return text.length ? text : @"-";
 }
 
+static NSString *ZZCompactDiagnosticURL(id value, NSUInteger maxLength) {
+    if (![value isKindOfClass:NSString.class]) return @"-";
+    NSString *url = [(NSString *)value copy];
+    NSRange scheme = [url rangeOfString:@"://"];
+    if (scheme.location != NSNotFound) {
+        NSUInteger hostStart = NSMaxRange(scheme);
+        if (hostStart < url.length) {
+            NSRange path = [url rangeOfString:@"/" options:0 range:NSMakeRange(hostStart, url.length - hostStart)];
+            if (path.location != NSNotFound) {
+                url = [url substringFromIndex:path.location];
+            }
+        }
+    }
+    url = [url stringByReplacingOccurrencesOfString:@"\\n" withString:@" "];
+    url = [url stringByReplacingOccurrencesOfString:@"\\r" withString:@" "];
+
+    NSRange q = [url rangeOfString:@"?productId="];
+    if (q.location != NSNotFound) {
+        NSString *prefix = [url substringToIndex:NSMaxRange(q)];
+        NSString *valuePart = [url substringFromIndex:NSMaxRange(q)];
+        if (valuePart.length > 8) {
+            valuePart = [valuePart substringToIndex:8];
+            url = [prefix stringByAppendingFormat:@"%@…", valuePart];
+        }
+    }
+
+    if (maxLength > 0 && url.length > maxLength) {
+        url = [[url substringToIndex:maxLength] stringByAppendingString:@"…"];
+    }
+    return url.length ? url : @"-";
+}
+
 - (NSString *)diagnosticSummary {
     NSUInteger hooks = ZZRuntimeFilteringHookCount();
     NSUInteger calls = ZZRuntimeFilteringCalls();
@@ -339,15 +371,7 @@ static NSString *ZZCompactDiagnosticText(id value, NSUInteger maxLength) {
     NSUInteger observedDetail2xx = ZZObservedDetail2xxResponses();
     NSUInteger observedDetailVersionMatches = ZZObservedDetailVersionMatches();
     NSInteger observedDetailLastStatus = ZZObservedDetailLastStatus();
-    NSString *observedDetailAllow = ZZCompactDiagnosticText(ZZObservedDetailLastAllow(), 32);
-    NSString *observed2xxVersion = ZZCompactDiagnosticText(ZZObservedDetailLast2xxVersion(), 24);
-    NSUInteger observed2xxBytes = ZZObservedDetailLast2xxBytes();
-    NSString *observed2xxContentType = ZZCompactDiagnosticText(ZZObservedDetailLast2xxContentType(), 36);
-    NSString *observed2xxURL = ZZCompactDiagnosticText(ZZObservedDetailLast2xxURL(), 72);
-    NSString *observed2xxBody = ZZCompactDiagnosticText(ZZObservedDetailLast2xxBody(), 96);
-    NSString *observedFailureURL = ZZCompactDiagnosticText(ZZObservedDetailLastFailureURL(), 72);
-    NSString *observedFailureMethod = ZZCompactDiagnosticText(ZZObservedDetailLastFailureMethod(), 12);
-    NSString *observedFailureBody = ZZCompactDiagnosticText(ZZObservedDetailLastFailureBody(), 96);
+    NSString *observedDetailAllow = ZZCompactDiagnosticText(ZZObservedDetailLastAllow(), 18);
     NSUInteger detailResponses = ZZDetailHTTPResponses();
     NSUInteger detail2xx = ZZDetailHTTP2xxResponses();
     NSUInteger detailFailures = ZZDetailHTTPFailureResponses();
@@ -356,48 +380,51 @@ static NSString *ZZCompactDiagnosticText(id value, NSUInteger maxLength) {
     NSUInteger detailPOSTForm = ZZDetailPOSTFormRequests();
     NSUInteger detailPOSTJSON = ZZDetailPOSTJSONRequests();
 
-    // v54: keep this path deliberately boring. v53 used NSURL parsing and a
-    // large nested stringWithFormat chain while the host app was on the main
-    // thread; the crash report showed an Objective-C runtime-lock recursion
-    // during diagnosticSummary. Build the message with appendString/appendFormat
-    // and only pass known NSString instances to %@.
-    NSMutableString *out = [NSMutableString stringWithCapacity:1200];
+    NSString *failureURL = ZZCompactDiagnosticURL(ZZObservedDetailLastFailureURL(), 58);
+    NSString *failureMethod = ZZCompactDiagnosticText(ZZObservedDetailLastFailureMethod(), 8);
+
+    // v55: diagnostics are intentionally compact. UIAlertController displays
+    // its message below the title, so a long diagnostic string makes the alert
+    // unnecessarily tall. Keep only high-value fields in the popup and leave
+    // full response bodies in the Debug log.
+    NSMutableString *out = [NSMutableString stringWithCapacity:720];
     [out appendString:@"插件已加载\n"];
     [out appendFormat:@"UI：Hook %lu / 调用 %lu\n", (unsigned long)hooks, (unsigned long)calls];
     [out appendFormat:@"商品：处理 %lu / 隐藏 %lu\n", (unsigned long)processed, (unsigned long)hidden];
     [out appendFormat:@"网络：拦截 %lu / 修改 %lu\n", (unsigned long)network, (unsigned long)modified];
-    [out appendFormat:@"详情：预取 %lu / 观察 %lu / 响应 %lu\n", (unsigned long)detailRequests, (unsigned long)observedDetailRequests, (unsigned long)observedDetailResponses];
-    [out appendFormat:@"响应：2xx %lu / 失败 %lu / 最近 %ld\n", (unsigned long)observedDetail2xx, (unsigned long)detailFailures, (long)observedDetailLastStatus];
-    [out appendFormat:@"版本：解析 %lu / 命中 %lu\n", (unsigned long)observedDetailVersionMatches, (unsigned long)observedDetailVersionMatches];
-    [out appendFormat:@"请求：GET %lu / 表单 %lu / JSON %lu\n", (unsigned long)detailGET, (unsigned long)detailPOSTForm, (unsigned long)detailPOSTJSON];
-    [out appendFormat:@"实际响应：%lu / 2xx %lu / 失败 %lu\n", (unsigned long)detailResponses, (unsigned long)detail2xx, (unsigned long)detailFailures];
-    [out appendFormat:@"最后HTTP：%ld\n", (long)detailLastStatus];
-    [out appendString:@"最后失败："];
-    if (![observedFailureURL isEqualToString:@"-"]) {
-        [out appendString:observedFailureMethod];
-        [out appendString:@" "];
-        [out appendFormat:@"%ld ", (long)observedDetailLastStatus];
-        [out appendString:observedFailureURL];
+    [out appendFormat:@"详情：预取 %lu / 观察 %lu / 响应 %lu\n",
+                      (unsigned long)detailRequests,
+                      (unsigned long)observedDetailRequests,
+                      (unsigned long)observedDetailResponses];
+    [out appendFormat:@"实际：响应 %lu / 2xx %lu / 失败 %lu\n",
+                      (unsigned long)detailResponses,
+                      (unsigned long)detail2xx,
+                      (unsigned long)detailFailures];
+    [out appendFormat:@"版本：解析 %lu / 命中 %lu\n",
+                      (unsigned long)observedDetailVersionMatches,
+                      (unsigned long)observedDetailVersionMatches];
+    [out appendFormat:@"请求：GET %lu / 表单 %lu / JSON %lu\n",
+                      (unsigned long)detailGET,
+                      (unsigned long)detailPOSTForm,
+                      (unsigned long)detailPOSTJSON];
+
+    if (![failureURL isEqualToString:@"-"]) {
+        [out appendFormat:@"最后失败：%@ %ld %@\n", failureMethod, (long)detailLastStatus, failureURL];
     } else {
-        [out appendString:@"无"];
+        [out appendString:@"最后失败：无\n"];
     }
-    [out appendString:@"\nAllow："];
-    [out appendString:observedDetailAllow];
-    [out appendString:@"\n候选2xx："];
-    if (![observed2xxURL isEqualToString:@"-"]) {
-        [out appendString:observed2xxURL];
-        [out appendString:@" / "];
-        [out appendString:observed2xxContentType];
-        [out appendFormat:@" / %luB", (unsigned long)observed2xxBytes];
-    } else {
-        [out appendString:@"无"];
+
+    if (![observedDetailAllow isEqualToString:@"-"] && observedDetailAllow.length) {
+        [out appendFormat:@"Allow：%@\n", observedDetailAllow];
     }
-    [out appendString:@"\n候选版本："];
-    [out appendString:observed2xxVersion];
-    [out appendString:@"\n候选Body："];
-    [out appendString:observed2xxBody];
-    [out appendString:@"\n失败Body："];
-    [out appendString:observedFailureBody];
+
+    // Keep the popup single-screen friendly. Detailed 2xx URL/body and full
+    // failure HTML remain available in the debug log instead of the alert.
+    [out appendFormat:@"候选2xx：%lu / 观察状态 %ld\n",
+                      (unsigned long)observedDetail2xx,
+                      (long)observedDetailLastStatus];
+    [out appendString:@"完整 URL / Body：见 Debug 日志"];
+
     return out;
 }
 

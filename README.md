@@ -1,4 +1,4 @@
-# ZZFilterPlugin v54
+# ZZFilterPlugin v55
 
 本版基于 v51 的实际注入结果继续调整。v51 已确认 `https://lego.zhuanzhuan.com/v1/coke-real` 会返回 200，但它只是一个成功消息响应，不应被当作“详情 2xx”；与此同时真正的详情请求大量出现 405。v52 因此把诊断从“主动复制请求”改成“只观察转转自己发出的请求/响应”。
 
@@ -31,3 +31,10 @@
 - URL 改为仅显示 path，长文本自动截断。
 - 保留最后失败 method/status/path、候选 2xx、版本解析和命中等关键诊断。
 - 完整响应正文仍写入 Debug 日志，不影响网络诊断。
+
+
+## v55 UI 排版
+- Debug 状态弹窗进一步压缩为单屏核心诊断。
+- 删除候选 2xx 完整 URL / Body 与 405 HTML 正文在弹窗内的展示。
+- 保留 UI、商品、网络、详情、请求、HTTP、版本命中和最后失败 URL。
+- 完整 URL / Body 继续进入 Debug 日志。
