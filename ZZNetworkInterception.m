@@ -215,6 +215,10 @@ static NSString *ZZProductIDFromResponseURL(NSURL *url) {
     return @"";
 }
 
+static BOOL ZZIsInternalDetailRequest(NSURLRequest *request) {
+    return [[request valueForHTTPHeaderField:@"X-ZZFilter-Internal-Detail"] isEqualToString:@"1"];
+}
+
 static BOOL ZZLooksLikeDetailRequest(NSURLRequest *request) {
     NSURL *url = request.URL;
     NSString *host = url.host.lowercaseString ?: @"";
@@ -411,7 +415,7 @@ static BOOL ZZLooksLikeDetailResponse(NSURLRequest *request, NSURLResponse *resp
 }
 
 static void ZZRecordObservedDetailRequest(NSURLRequest *request) {
-    if (!request || !request.URL || gZZInsideObserverRequest) return;
+    if (!request || !request.URL || gZZInsideObserverRequest || ZZIsInternalDetailRequest(request)) return;
     ZZEnsureObservedRequestLock();
     @synchronized (gObservedRequestLock) {
         if (gObservedDetailRequests >= 48) return;
@@ -424,6 +428,7 @@ static void ZZRecordObservedDetailRequest(NSURLRequest *request) {
 }
 
 static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLResponse *response, NSError *error) {
+    if (ZZIsInternalDetailRequest(request)) return;
     NSInteger status = [response isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)response).statusCode : 0;
     NSString *allow = @"";
     NSString *contentType = @"";
@@ -545,7 +550,7 @@ static void ZZMarkTaskObserved(NSURLSessionDataTask *task) {
 static void ZZInspectTaskForDetail(NSURLSessionDataTask *task) {
     if (!task || ZZTaskWasObserved(task)) return;
     NSURLRequest *request = task.originalRequest ?: task.currentRequest;
-    if (!request || !ZZLooksLikeDetailRequest(request)) return;
+    if (!request || ZZIsInternalDetailRequest(request) || !ZZLooksLikeDetailRequest(request)) return;
     ZZMarkTaskObserved(task);
     ZZRecordObservedDetailRequest(request);
 }
@@ -554,7 +559,7 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, S
     (void)_cmd;
     if (!request) return [(NSURLSession *)self zz_filter_dataTaskWithRequest_completion:request completionHandler:completion];
 
-    BOOL isDetail = ZZLooksLikeDetailRequest(request);
+    BOOL isDetail = !ZZIsInternalDetailRequest(request) && ZZLooksLikeDetailRequest(request);
     void (^wrappedCompletion)(NSData *, NSURLResponse *, NSError *) = completion;
     if (isDetail && !gZZInsideObserverRequest) {
         void (^originalCompletion)(NSData *, NSURLResponse *, NSError *) = [completion copy];
@@ -578,7 +583,7 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL_completion(id self, SEL _
     if (!url) return [(NSURLSession *)self zz_filter_dataTaskWithURL_completion:url completionHandler:completion];
 
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
-    BOOL isDetail = ZZLooksLikeDetailRequest(request);
+    BOOL isDetail = !ZZIsInternalDetailRequest(request) && ZZLooksLikeDetailRequest(request);
     if (isDetail && !gZZInsideObserverRequest) {
         void (^originalCompletion)(NSData *, NSURLResponse *, NSError *) = [completion copy];
         NSURLRequest *observedRequest = request.copy;

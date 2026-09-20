@@ -34,6 +34,7 @@ static NSData *ZZJSONBodyFromURL(NSURL *url) {
 
 static NSMutableURLRequest *ZZMakeVariant(NSURLRequest *base, NSString *method, NSData *body, NSString *contentType) {
     NSMutableURLRequest *r = [base mutableCopy];
+    [r setValue:@"1" forHTTPHeaderField:@"X-ZZFilter-Internal-Detail"];
     r.HTTPMethod = method;
     r.HTTPBody = body;
     if (contentType.length) [r setValue:contentType forHTTPHeaderField:@"Content-Type"];
@@ -259,6 +260,10 @@ static NSDictionary<NSString *,NSString *> *ZZSourceRequestParams(NSURLRequest *
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:finalURL];
     request.HTTPMethod = @"GET";
     request.timeoutInterval = 5.0;
+    // v56: requests created by the plugin itself must never be counted as
+    // "real app traffic" by the passive observer. This separates our
+    // diagnostic probes from the app's own detail requests.
+    [request setValue:@"1" forHTTPHeaderField:@"X-ZZFilter-Internal-Detail"];
 
     NSDictionary *sourceHeaders = sourceRequest.allHTTPHeaderFields ?: @{};
     // Preserve application-level headers from the real app request, including
@@ -459,135 +464,11 @@ static NSDictionary<NSString *,NSString *> *ZZSourceRequestParams(NSURLRequest *
                 }
             }
 
-            // v37: the reference binary contains both /zzopen/waresshow/moreInfo
-            // and /waresshow/moreinfo path forms. If the canonical path rejects
-            // GET with 400/405, try the two observed path spellings before changing
-            // the HTTP method. This stays bounded to two extra requests per item.
-            if (!resolved && (status == 400 || status == 405)) {
-                for (NSUInteger altIndex = 1; altIndex <= 2 && !resolved; altIndex++) {
-                    NSURL *altURL = ZZAlternateDetailURL(request.URL, altIndex);
-                    if (!altURL || [altURL.absoluteString isEqualToString:request.URL.absoluteString]) continue;
-                    NSMutableURLRequest *alt = [request mutableCopy];
-                    alt.URL = altURL;
-                    alt.HTTPMethod = @"GET";
-                    alt.HTTPBody = nil;
-                    __block NSData *d = nil; __block NSURLResponse *r = nil; __block NSError *e = nil;
-                    dispatch_semaphore_t w = dispatch_semaphore_create(0);
-                    NSURLSessionDataTask *t = [self.session dataTaskWithRequest:alt completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) { d=data; r=response; e=error; dispatch_semaphore_signal(w); }];
-                    [t resume]; dispatch_semaphore_wait(w, DISPATCH_TIME_FOREVER);
-                    recordResponse(alt, d, r, e);
-                    status = [r isKindOfClass:NSHTTPURLResponse.class] ? [(NSHTTPURLResponse *)r statusCode] : 0;
-                    if (status >= 200 && status <= 299) {
-                        NSDictionary *entry = [self entryFromData:d response:r error:e];
-                        if (entry.count) {
-                            NSMutableDictionary *candidate = [entry mutableCopy];
-                            if (!ZZProductIDFromInfo(candidate).length) candidate[@"productId"] = pid;
-                            NSString *version = ZZProductVersionFromDictionary(candidate);
-                            if (version.length) { candidate[@"zzSystemVersion"] = version; @synchronized (entriesLock) { [entries addObject:candidate.copy]; } resolved = YES; }
-                        }
-                    }
-                }
-            }
-
-            if (!resolved && (status == 400 || status == 405)) {
-                NSMutableURLRequest *post = ZZMakeVariant(request, @"POST", ZZFormBodyFromURL(request.URL), @"application/x-www-form-urlencoded; charset=utf-8");
-                __block NSData *d = nil; __block NSURLResponse *r = nil; __block NSError *e = nil;
-                if (post) {
-                    dispatch_semaphore_t w = dispatch_semaphore_create(0);
-                    NSURLSessionDataTask *t = [self.session dataTaskWithRequest:post completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) { d=data; r=response; e=error; dispatch_semaphore_signal(w); }];
-                    [t resume]; dispatch_semaphore_wait(w, DISPATCH_TIME_FOREVER);
-                    recordResponse(post, d, r, e);
-                    status = [r isKindOfClass:NSHTTPURLResponse.class] ? [(NSHTTPURLResponse *)r statusCode] : 0;
-                    if (status >= 200 && status <= 299) {
-                        NSDictionary *entry = [self entryFromData:d response:r error:e];
-                        if (entry.count) {
-                            NSMutableDictionary *candidate = [entry mutableCopy];
-                            if (!ZZProductIDFromInfo(candidate).length) candidate[@"productId"] = pid;
-                            NSString *version = ZZProductVersionFromDictionary(candidate);
-                            if (version.length) { candidate[@"zzSystemVersion"] = version; @synchronized (entriesLock) { [entries addObject:candidate.copy]; } resolved = YES; }
-                        }
-                    }
-                }
-            }
-
-            if (!resolved && (status == 400 || status == 405)) {
-                NSMutableURLRequest *postJSON = ZZMakeVariant(request, @"POST", ZZJSONBodyFromURL(request.URL), @"application/json; charset=utf-8");
-                __block NSData *d = nil; __block NSURLResponse *r = nil; __block NSError *e = nil;
-                if (postJSON) {
-                    dispatch_semaphore_t w = dispatch_semaphore_create(0);
-                    NSURLSessionDataTask *t = [self.session dataTaskWithRequest:postJSON completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) { d=data; r=response; e=error; dispatch_semaphore_signal(w); }];
-                    [t resume]; dispatch_semaphore_wait(w, DISPATCH_TIME_FOREVER);
-                    recordResponse(postJSON, d, r, e);
-                    status = [r isKindOfClass:NSHTTPURLResponse.class] ? [(NSHTTPURLResponse *)r statusCode] : 0;
-                    if (status >= 200 && status <= 299) {
-                        NSDictionary *entry = [self entryFromData:d response:r error:e];
-                        if (entry.count) {
-                            NSMutableDictionary *candidate = [entry mutableCopy];
-                            if (!ZZProductIDFromInfo(candidate).length) candidate[@"productId"] = pid;
-                            NSString *version = ZZProductVersionFromDictionary(candidate);
-                            if (version.length) { candidate[@"zzSystemVersion"] = version; @synchronized (entriesLock) { [entries addObject:candidate.copy]; } resolved = YES; }
-                        }
-                    }
-                }
-            }
-
-            // v36: some gateways reject POST when query parameters remain on the
-            // URL and require the request payload to be body-only. Retry the two
-            // bounded POST encodings once with the query stripped. This is still
-            // limited to the detail endpoint/jump URL and the 12-item batch.
-            if (!resolved && (status == 400 || status == 405)) {
-                NSURLComponents *bodyOnlyComponents = [NSURLComponents componentsWithURL:request.URL resolvingAgainstBaseURL:NO];
-                bodyOnlyComponents.query = nil;
-                NSMutableURLRequest *postBodyOnly = [request mutableCopy];
-                postBodyOnly.URL = bodyOnlyComponents.URL;
-                postBodyOnly.HTTPMethod = @"POST";
-                postBodyOnly.HTTPBody = ZZFormBodyFromURL(request.URL);
-                [postBodyOnly setValue:@"application/x-www-form-urlencoded; charset=utf-8" forHTTPHeaderField:@"Content-Type"];
-                __block NSData *d = nil; __block NSURLResponse *r = nil; __block NSError *e = nil;
-                if (postBodyOnly.URL) {
-                    dispatch_semaphore_t w = dispatch_semaphore_create(0);
-                    NSURLSessionDataTask *t = [self.session dataTaskWithRequest:postBodyOnly completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) { d=data; r=response; e=error; dispatch_semaphore_signal(w); }];
-                    [t resume]; dispatch_semaphore_wait(w, DISPATCH_TIME_FOREVER);
-                    recordResponse(postBodyOnly, d, r, e);
-                    status = [r isKindOfClass:NSHTTPURLResponse.class] ? [(NSHTTPURLResponse *)r statusCode] : 0;
-                    if (status >= 200 && status <= 299) {
-                        NSDictionary *entry = [self entryFromData:d response:r error:e];
-                        if (entry.count) {
-                            NSMutableDictionary *candidate = [entry mutableCopy];
-                            if (!ZZProductIDFromInfo(candidate).length) candidate[@"productId"] = pid;
-                            NSString *version = ZZProductVersionFromDictionary(candidate);
-                            if (version.length) { candidate[@"zzSystemVersion"] = version; @synchronized (entriesLock) { [entries addObject:candidate.copy]; } resolved = YES; }
-                        }
-                    }
-                }
-            }
-
-            if (!resolved && (status == 400 || status == 405)) {
-                NSURLComponents *bodyOnlyComponents = [NSURLComponents componentsWithURL:request.URL resolvingAgainstBaseURL:NO];
-                bodyOnlyComponents.query = nil;
-                NSMutableURLRequest *postJSONBodyOnly = [request mutableCopy];
-                postJSONBodyOnly.URL = bodyOnlyComponents.URL;
-                postJSONBodyOnly.HTTPMethod = @"POST";
-                postJSONBodyOnly.HTTPBody = ZZJSONBodyFromURL(request.URL);
-                [postJSONBodyOnly setValue:@"application/json; charset=utf-8" forHTTPHeaderField:@"Content-Type"];
-                __block NSData *d = nil; __block NSURLResponse *r = nil; __block NSError *e = nil;
-                if (postJSONBodyOnly.URL) {
-                    dispatch_semaphore_t w = dispatch_semaphore_create(0);
-                    NSURLSessionDataTask *t = [self.session dataTaskWithRequest:postJSONBodyOnly completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) { d=data; r=response; e=error; dispatch_semaphore_signal(w); }];
-                    [t resume]; dispatch_semaphore_wait(w, DISPATCH_TIME_FOREVER);
-                    recordResponse(postJSONBodyOnly, d, r, e);
-                    status = [r isKindOfClass:NSHTTPURLResponse.class] ? [(NSHTTPURLResponse *)r statusCode] : 0;
-                    if (status >= 200 && status <= 299) {
-                        NSDictionary *entry = [self entryFromData:d response:r error:e];
-                        if (entry.count) {
-                            NSMutableDictionary *candidate = [entry mutableCopy];
-                            if (!ZZProductIDFromInfo(candidate).length) candidate[@"productId"] = pid;
-                            NSString *version = ZZProductVersionFromDictionary(candidate);
-                            if (version.length) { candidate[@"zzSystemVersion"] = version; @synchronized (entriesLock) { [entries addObject:candidate.copy]; } resolved = YES; }
-                        }
-                    }
-                }
-            }
+            // v56: do not generate speculative alternate-method requests here.
+            // The previous versions turned one product into many synthetic 400/405
+            // requests, which polluted the observer and obscured the app's real
+            // detail traffic. The passive observer now captures the app's own
+            // successful detail response instead.
 
             if (!resolved && bestError) { @synchronized (self) { if (!firstError) firstError = bestError; } }
             dispatch_semaphore_signal(slots);
