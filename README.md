@@ -1,8 +1,8 @@
-# ZZFilterPlugin v53
+# ZZFilterPlugin v54
 
 本版基于 v51 的实际注入结果继续调整。v51 已确认 `https://lego.zhuanzhuan.com/v1/coke-real` 会返回 200，但它只是一个成功消息响应，不应被当作“详情 2xx”；与此同时真正的详情请求大量出现 405。v52 因此把诊断从“主动复制请求”改成“只观察转转自己发出的请求/响应”。
 
-## v53 重点
+## v54 重点
 - **取消详情主动复制请求**：不再为了探测详情而额外发起 GET/POST/表单/JSON 变体，避免额外 405、重复请求和诊断噪声。
 - **被动观察真实 App 请求**：通过 `NSURLSession` 的实际 task/completion 路径记录请求和响应；Apple 的 `NSURLSessionDataTask` 文档确认 completion handler 会收到 `NSData`、`NSURLResponse` 和 `NSError`，适合在不改变原请求的情况下观察结果。citeturn0search3
 - **排除 `/v1/coke-real`**：即使返回 2xx，也不会再进入“详情 2xx”候选。
@@ -25,7 +25,7 @@
 如果再次出现 405，v52 应该直接把具体 405 URL 显示出来，而不会再把无关的 `/v1/coke-real` 200 当成详情响应。
 
 
-## v53 UI 排版
+## v54 UI 排版
 - 将长状态栏改为紧凑分组：UI、商品、网络、详情、版本、请求。
 - 默认不再展开完整 HTML 405 Body，避免诊断框撑满屏幕。
 - URL 改为仅显示 path，长文本自动截断。
