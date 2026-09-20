@@ -12,6 +12,11 @@ static NSUInteger ZZNetworkModifiedCount;
 static NSUInteger ZZDetailPrefetchCount;
 static NSUInteger ZZDetailPrefetchEntryCount;
 
+static BOOL ZZIsStreamlineDetailRequest(NSURLRequest *request) {
+    NSString *path = request.URL.path.lowercaseString ?: @"";
+    return [path containsString:@"/u/streamline_detail/new-goods-detail"];
+}
+
 NSUInteger ZZNetworkInterceptedRequests(void) { return ZZNetworkInterceptedCount; }
 NSUInteger ZZNetworkModifiedResponses(void) { return ZZNetworkModifiedCount; }
 NSUInteger ZZDetailPrefetchRequests(void) { return ZZDetailPrefetchCount; }
@@ -57,6 +62,9 @@ NSUInteger ZZDetailPrefetchEntries(void) { return ZZDetailPrefetchEntryCount; }
     }
     BOOL detailPath = [path containsString:@"detail"] || [path containsString:@"item"] ||
                       [path containsString:@"goods"] || [path containsString:@"product"];
+    // v59: capture the app's actual streamline detail endpoint even when the
+    // product id is carried in POST body instead of the query string.
+    if ([path containsString:@"/u/streamline_detail/new-goods-detail"]) return YES;
     return hasDetailID && detailPath;
 }
 
@@ -81,8 +89,33 @@ static NSString *ZZQueryValue(NSURL *url, NSArray<NSString *> *names) {
 }
 
 static NSString *ZZFallbackProductIDFromRequest(NSURLRequest *request) {
-    NSString *pid = ZZQueryValue(request.URL, @[@"productId", @"productID", @"goodsId", @"itemId", @"infoId", @"strInfoId", @"infoid"]);
-    return pid ?: @"";
+    NSArray<NSString *> *names = @[@"productId", @"productID", @"goodsId", @"itemId", @"infoId", @"strInfoId", @"infoid"];
+    NSString *pid = ZZQueryValue(request.URL, names);
+    if (pid.length) return pid;
+    NSData *body = request.HTTPBody;
+    if (!body.length) return @"";
+    id obj = [NSJSONSerialization JSONObjectWithData:body options:0 error:NULL];
+    if ([obj isKindOfClass:NSDictionary.class]) {
+        for (NSString *name in names) {
+            id value = ((NSDictionary *)obj)[name];
+            if ([value isKindOfClass:NSString.class] && [(NSString *)value length]) return value;
+            if ([value respondsToSelector:@selector(stringValue)]) { NSString *v = [value stringValue]; if (v.length) return v; }
+        }
+    }
+    NSString *text = [[NSString alloc] initWithData:body encoding:NSUTF8StringEncoding];
+    if (!text.length) return @"";
+    NSString *decoded = [text stringByRemovingPercentEncoding] ?: text;
+    for (NSString *name in names) {
+        NSString *needle = [NSString stringWithFormat:@"%@=", name];
+        NSRange r = [decoded rangeOfString:needle options:NSCaseInsensitiveSearch];
+        if (r.location != NSNotFound) {
+            NSString *tail = [decoded substringFromIndex:NSMaxRange(r)];
+            NSRange amp = [tail rangeOfString:@"&"];
+            if (amp.location != NSNotFound) tail = [tail substringToIndex:amp.location];
+            if (tail.length) return [tail stringByRemovingPercentEncoding] ?: tail;
+        }
+    }
+    return @"";
 }
 
 static BOOL ZZLooksLikeProductDictionary(NSDictionary *d) {
@@ -258,33 +291,12 @@ static NSArray *ZZFilterProducts(NSArray *products, NSUInteger *knownOut) {
 }
 
 static void ZZWaitForDetailEnrichment(NSArray<NSString *> *ids, NSDictionary<NSString *,NSURL *> *jumpURLs, NSURLRequest *sourceRequest) {
-    if (!ids.count) return;
-    NSMutableArray<NSString *> *todo = [NSMutableArray array];
-    for (NSString *pid in ids) {
-        if (![[ZZProductVisibility shared] cachedVersionForProductID:pid].length) [todo addObject:pid];
-        if (todo.count >= 12) break;
-    }
-    if (!todo.count) return;
-
-    NSURL *baseURL = [NSURL URLWithString:@"https://app.zhuanzhuan.com/zzopen/waresshow/moreInfo"];
-    if (!baseURL) return;
-
-    dispatch_semaphore_t done = dispatch_semaphore_create(0);
-    NSDictionary *headers = sourceRequest.allHTTPHeaderFields ?: @{};
-    ZZDetailPrefetchCount += todo.count;
-    ZZDetailFetcher *fetcher = [ZZDetailFetcher shared];
-    [fetcher fetchDetailsForProductIDs:todo jumpURLsByProductID:jumpURLs sourceRequest:sourceRequest baseURL:baseURL headers:headers completion:^(NSArray<NSDictionary *> *entries, NSError *error) {
-        ZZDetailPrefetchEntryCount += entries.count;
-        for (NSDictionary *entry in entries) {
-            NSString *pid = ZZProductIDFromInfo(entry);
-            if (pid.length && ZZProductVersionFromDictionary(entry).length) [[ZZProductVisibility shared] recordEntries:@[entry] forProductIDs:@[pid]];
-        }
-        ZZFilterDebugWrite(@"[ZZFilterDetail] complete requested=%lu resolved=%lu error=%@",
-                           (unsigned long)todo.count, (unsigned long)entries.count,
-                           error.localizedDescription ?: @"none");
-        dispatch_semaphore_signal(done);
-    }];
-    dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)));
+    // v59: passive-only mode. Do not synthesize detail requests. The app's
+    // own detail traffic is captured by ZZFilterURLProtocol instead.
+    (void)ids;
+    (void)jumpURLs;
+    (void)sourceRequest;
+    ZZFilterDebugWrite(@"[ZZFilterDetail] v59 passive mode: speculative detail prefetch disabled");
 }
 
 + (NSData *)filteredJSONData:(NSData *)data
@@ -368,6 +380,8 @@ static void ZZWaitForDetailEnrichment(NSArray<NSString *> *ids, NSDictionary<NSS
     [NSURLProtocol setProperty:@YES forKey:kHandledKey inRequest:request];
     self.sourceRequest = request.copy;
     NSString *path = request.URL.path.lowercaseString ?: @"";
+    BOOL streamlineDetail = ZZIsStreamlineDetailRequest(request);
+    if (streamlineDetail) ZZRecordProtocolDetailRequest(request);
     self.detailCaptureOnly = !([path containsString:@"/zz/transfer/search"] ||
                                [path containsString:@"transmitparamsearch"] ||
                                [path containsString:@"waresshow/moreinfo"]);
@@ -401,7 +415,8 @@ static void ZZWaitForDetailEnrichment(NSArray<NSString *> *ids, NSDictionary<NSS
         NSString *contentType = http.allHeaderFields[@"Content-Type"];
         NSString *urlString = response.URL.absoluteString.lowercaseString ?: @"";
         NSString *ct = contentType.lowercaseString ?: @"";
-        self.shouldProcessResponse = [ct containsString:@"json"] || [urlString containsString:@"moreinfo"] || [urlString containsString:@"search"];
+        BOOL streamlineDetail = [urlString containsString:@"/u/streamline_detail/new-goods-detail"];
+        self.shouldProcessResponse = streamlineDetail || [ct containsString:@"json"] || [urlString containsString:@"moreinfo"] || [urlString containsString:@"search"];
     }
     completionHandler(NSURLSessionResponseAllow);
     if (!self.shouldProcessResponse && response) [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageAllowed];
@@ -431,6 +446,9 @@ static void ZZWaitForDetailEnrichment(NSArray<NSString *> *ids, NSDictionary<NSS
         NSError *filterError = nil;
         NSData *original = self.responseData ?: [NSData data];
         NSData *output = original;
+        if (ZZIsStreamlineDetailRequest(self.sourceRequest)) {
+            ZZRecordProtocolDetailResponse(self.sourceRequest, self.receivedResponse, original);
+        }
 
         // v38: learn system-version data from the app's actual detail response.
         // Do not rewrite the detail page response itself.

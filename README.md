@@ -13,3 +13,11 @@
 如果 `观察2xx` > 0 但 `候选2xx` 仍为 0，状态栏会直接显示最后一个实际 2xx URL；据此可继续定位真正的详情接口。
 
 当前环境未提供 iPhoneOS SDK，因此最终 arm64/arm64e 编译仍需通过 GitHub Actions 完成。
+
+
+## v59 changes
+- Passive detail capture: speculative detail prefetch is disabled to avoid synthetic 405 traffic.
+- Added direct capture for `/u/streamline_detail/new-goods-detail`, including POST/body requests.
+- Added protocol-level detail request/response counters and last status diagnostics.
+- Known `/v1/coke-real` 2xx remains excluded from detail candidates.
+- Debug popup remains compact; full URL/body stays in the debug log.

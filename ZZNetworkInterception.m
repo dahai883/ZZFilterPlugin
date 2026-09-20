@@ -28,6 +28,14 @@ static NSUInteger gObservedDetailLastObserved2xxBytes;
 static NSString *gObservedDetailLastFailureURL;
 static NSString *gObservedDetailLastFailureMethod;
 static NSString *gObservedDetailLastFailureBody;
+static NSUInteger gProtocolDetailRequests;
+static NSUInteger gProtocolDetailResponses;
+static NSUInteger gProtocolDetail2xxResponses;
+static NSUInteger gProtocolDetailFailureResponses;
+static NSInteger gProtocolDetailLastStatusCode;
+static NSString *gProtocolDetailLastURL;
+static NSString *gProtocolDetailLastMethod;
+static NSString *gProtocolDetailLastBody;
 static NSObject *gDetailCaptureLock;
 static NSObject *gObservedRequestLock;
 static __thread BOOL gZZInsideObserverRequest = NO;
@@ -664,6 +672,49 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL(id self, SEL _cmd, NSURL 
     }
 }
 @end
+
+
+static NSString *ZZProtocolBodyPreviewForDebug(NSData *data) {
+    if (!data.length) return @"";
+    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (!text.length) text = [[NSString alloc] initWithData:data encoding:NSASCIIStringEncoding];
+    if (text.length > 420) text = [text substringToIndex:420];
+    return text ?: @"";
+}
+
+NSUInteger ZZProtocolDetailRequests(void) { ZZEnsureObservedRequestLock(); @synchronized (gObservedRequestLock) { return gProtocolDetailRequests; } }
+NSUInteger ZZProtocolDetailResponses(void) { ZZEnsureObservedRequestLock(); @synchronized (gObservedRequestLock) { return gProtocolDetailResponses; } }
+NSUInteger ZZProtocolDetail2xxResponses(void) { ZZEnsureObservedRequestLock(); @synchronized (gObservedRequestLock) { return gProtocolDetail2xxResponses; } }
+NSUInteger ZZProtocolDetailFailureResponses(void) { ZZEnsureObservedRequestLock(); @synchronized (gObservedRequestLock) { return gProtocolDetailFailureResponses; } }
+NSInteger ZZProtocolDetailLastStatus(void) { ZZEnsureObservedRequestLock(); @synchronized (gObservedRequestLock) { return gProtocolDetailLastStatusCode; } }
+NSString *ZZProtocolDetailLastURL(void) { ZZEnsureObservedRequestLock(); @synchronized (gObservedRequestLock) { return gProtocolDetailLastURL.copy ?: @""; } }
+NSString *ZZProtocolDetailLastMethod(void) { ZZEnsureObservedRequestLock(); @synchronized (gObservedRequestLock) { return gProtocolDetailLastMethod.copy ?: @""; } }
+NSString *ZZProtocolDetailLastBody(void) { ZZEnsureObservedRequestLock(); @synchronized (gObservedRequestLock) { return gProtocolDetailLastBody.copy ?: @""; } }
+
+void ZZRecordProtocolDetailRequest(NSURLRequest *request) {
+    if (!request) return;
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { gProtocolDetailRequests += 1; }
+    ZZFilterDebugWrite(@"[ZZProtocolDetail] request method=%@ url=%@ body=%@", request.HTTPMethod ?: @"GET", request.URL.absoluteString ?: @"", ZZProtocolBodyPreviewForDebug(request.HTTPBody));
+}
+
+void ZZRecordProtocolDetailResponse(NSURLRequest *request, NSURLResponse *response, NSData *data) {
+    NSInteger status = [response isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)response).statusCode : 0;
+    NSString *url = response.URL.absoluteString ?: request.URL.absoluteString ?: @"";
+    NSString *method = request.HTTPMethod ?: @"GET";
+    NSString *body = ZZProtocolBodyPreviewForDebug(data);
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) {
+        gProtocolDetailResponses += 1;
+        gProtocolDetailLastStatusCode = status;
+        gProtocolDetailLastURL = url.copy;
+        gProtocolDetailLastMethod = method.copy;
+        gProtocolDetailLastBody = body.copy;
+        if (status >= 200 && status < 300) gProtocolDetail2xxResponses += 1;
+        else if (status >= 400 && status < 600) gProtocolDetailFailureResponses += 1;
+    }
+    ZZFilterDebugWrite(@"[ZZProtocolDetail] response method=%@ status=%ld bytes=%lu url=%@ body=%@", method, (long)status, (unsigned long)data.length, url, body);
+}
 
 static void ZZEnsureCookieRegistry(void) {
     static dispatch_once_t onceToken;

@@ -32,5 +32,15 @@ FOUNDATION_EXPORT NSString *ZZObservedDetailLast2xxBody(void);
 FOUNDATION_EXPORT NSString *ZZObservedDetailLastFailureURL(void);
 FOUNDATION_EXPORT NSString *ZZObservedDetailLastFailureMethod(void);
 FOUNDATION_EXPORT NSString *ZZObservedDetailLastFailureBody(void);
+FOUNDATION_EXPORT NSUInteger ZZProtocolDetailRequests(void);
+FOUNDATION_EXPORT NSUInteger ZZProtocolDetailResponses(void);
+FOUNDATION_EXPORT NSUInteger ZZProtocolDetail2xxResponses(void);
+FOUNDATION_EXPORT NSUInteger ZZProtocolDetailFailureResponses(void);
+FOUNDATION_EXPORT NSInteger ZZProtocolDetailLastStatus(void);
+FOUNDATION_EXPORT NSString *ZZProtocolDetailLastURL(void);
+FOUNDATION_EXPORT NSString *ZZProtocolDetailLastMethod(void);
+FOUNDATION_EXPORT NSString *ZZProtocolDetailLastBody(void);
+FOUNDATION_EXPORT void ZZRecordProtocolDetailRequest(NSURLRequest * _Nullable request);
+FOUNDATION_EXPORT void ZZRecordProtocolDetailResponse(NSURLRequest * _Nullable request, NSURLResponse * _Nullable response, NSData * _Nullable data);
 
 NS_ASSUME_NONNULL_END

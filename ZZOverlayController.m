@@ -388,6 +388,13 @@ static NSString *ZZCompactDiagnosticURL(id value, NSUInteger maxLength) {
 
     NSString *failureURL = ZZCompactDiagnosticURL(ZZObservedDetailLastFailureURL(), 58);
     NSString *failureMethod = ZZCompactDiagnosticText(ZZObservedDetailLastFailureMethod(), 8);
+    NSUInteger protocolDetailRequests = ZZProtocolDetailRequests();
+    NSUInteger protocolDetailResponses = ZZProtocolDetailResponses();
+    NSUInteger protocolDetail2xx = ZZProtocolDetail2xxResponses();
+    NSUInteger protocolDetailFailures = ZZProtocolDetailFailureResponses();
+    NSInteger protocolDetailLastStatus = ZZProtocolDetailLastStatus();
+    NSString *protocolDetailLastMethod = ZZCompactDiagnosticText(ZZProtocolDetailLastMethod(), 8);
+    NSString *protocolDetailLastURL = ZZCompactDiagnosticURL(ZZProtocolDetailLastURL(), 54);
 
     // v55: diagnostics are intentionally compact. UIAlertController displays
     // its message below the title, so a long diagnostic string makes the alert
@@ -429,16 +436,14 @@ static NSString *ZZCompactDiagnosticURL(id value, NSUInteger maxLength) {
     [out appendFormat:@"观察2xx：%lu / 候选2xx：%lu\n",
                       (unsigned long)observedAny2xx,
                       (unsigned long)observedDetail2xx];
-    if (observedAny2xx > 0 && observedAny2xxURL.length) {
-        [out appendFormat:@"2xx：%@ %@ · %luB\n", observedAny2xxMethod, observedAny2xxURL, (unsigned long)observedAny2xxBytes];
-        if (observedAny2xxType.length) {
-            [out appendFormat:@"2xx类型：%@\n", observedAny2xxType];
-        }
-        if (observedAny2xxBody.length) {
-            [out appendFormat:@"2xx摘要：%@\n", observedAny2xxBody];
-        }
-    } else {
-        [out appendFormat:@"观察状态：%ld\n", (long)observedDetailLastStatus];
+    [out appendFormat:@"协议详情：请求 %lu / 响应 %lu / 2xx %lu / 失败 %lu\n",
+                      (unsigned long)protocolDetailRequests,
+                      (unsigned long)protocolDetailResponses,
+                      (unsigned long)protocolDetail2xx,
+                      (unsigned long)protocolDetailFailures];
+    if (protocolDetailLastStatus > 0 && protocolDetailLastURL.length) {
+        [out appendFormat:@"协议最后：%@ %ld %@\n",
+                          protocolDetailLastMethod, (long)protocolDetailLastStatus, protocolDetailLastURL];
     }
     [out appendString:@"完整 URL / Body：见 Debug 日志"];
 
