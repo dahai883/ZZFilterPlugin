@@ -399,6 +399,10 @@ static NSString *ZZCompactDiagnosticURL(id value, NSUInteger maxLength) {
     NSInteger protocolDetailLastStatus = ZZProtocolDetailLastStatus();
     NSString *protocolDetailLastMethod = ZZCompactDiagnosticText(ZZProtocolDetailLastMethod(), 8);
     NSString *protocolDetailLastURL = ZZCompactDiagnosticURL(ZZProtocolDetailLastURL(), 54);
+    NSUInteger observedNetworkTasks = ZZObservedNetworkTaskRequests();
+    NSString *lastNetworkTaskMethod = ZZCompactDiagnosticText(ZZObservedNetworkTaskLastMethod(), 8);
+    NSString *lastNetworkTaskURL = ZZCompactDiagnosticURL(ZZObservedNetworkTaskLastURL(), 54);
+    NSString *lastNetworkTaskBody = ZZCompactDiagnosticText(ZZObservedNetworkTaskLastBody(), 40);
 
     // v55: diagnostics are intentionally compact. UIAlertController displays
     // its message below the title, so a long diagnostic string makes the alert
@@ -450,6 +454,13 @@ static NSString *ZZCompactDiagnosticURL(id value, NSUInteger maxLength) {
         [out appendFormat:@"2xx最后：%@ %@\n", observedAny2xxMethod, observedAny2xxURL];
         if (lastObserved2xxBody.length && ![lastObserved2xxBody isEqualToString:@"-"]) {
             [out appendFormat:@"2xx摘要：%@\n", lastObserved2xxBody];
+        }
+    }
+    [out appendFormat:@"任务观察：%lu\n", (unsigned long)observedNetworkTasks];
+    if (![lastNetworkTaskURL isEqualToString:@"-"] && lastNetworkTaskURL.length) {
+        [out appendFormat:@"任务最后：%@ %@\n", lastNetworkTaskMethod, lastNetworkTaskURL];
+        if (![lastNetworkTaskBody isEqualToString:@"-"] && lastNetworkTaskBody.length) {
+            [out appendFormat:@"任务Body：%@\n", lastNetworkTaskBody];
         }
     }
     [out appendFormat:@"协议详情：请求 %lu / 响应 %lu / 2xx %lu / 失败 %lu\n",

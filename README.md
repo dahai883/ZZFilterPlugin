@@ -33,3 +33,15 @@
 
 ## v60 test focus
 Open the same product detail page and open the ZZFilterPlugin status. The important fields are `观察最后`, `2xx最后`, `2xx摘要`, and `协议详情`. If the 2xx URL is not the real product-detail endpoint, the next version can target the exact transport/path instead of generating more 405 requests.
+
+
+## v61 changes
+- Keep the v60 passive-only diagnostic strategy; no synthetic detail requests are added.
+- Add a lightweight `NSURLSessionTask resume` network census for Zhuanzhuan-host requests.
+- Record the latest task URL, HTTP method, and short request body preview even when the endpoint does not look like a conventional `detail/goods/item` path.
+- This is specifically to locate opaque detail endpoints that v60 could not classify; `/v1/coke-real` remains excluded from detail candidates.
+- Status popup adds `任务观察 / 任务最后 / 任务Body` while keeping the existing detail and protocol counters.
+- No filtering behavior is changed in this diagnostic version.
+
+## v61 test focus
+Open the product detail page, refresh the ZZFilterPlugin status, and check `任务最后`. If it is not `coke-real`, its path/body can be used to identify the actual product-detail transport.

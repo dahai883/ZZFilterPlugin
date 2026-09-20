@@ -39,6 +39,10 @@ static NSInteger gProtocolDetailLastStatusCode;
 static NSString *gProtocolDetailLastURL;
 static NSString *gProtocolDetailLastMethod;
 static NSString *gProtocolDetailLastBody;
+static NSUInteger gObservedNetworkTaskRequests;
+static NSString *gObservedNetworkTaskLastURL;
+static NSString *gObservedNetworkTaskLastMethod;
+static NSString *gObservedNetworkTaskLastBody;
 static NSObject *gDetailCaptureLock;
 static NSObject *gObservedRequestLock;
 static __thread BOOL gZZInsideObserverRequest = NO;
@@ -55,6 +59,7 @@ static void ZZRecordObservedDetailRequest(NSURLRequest *request);
 static BOOL ZZIsExcludedDetailResponseURL(NSURL *url);
 static BOOL ZZLooksLikeDetailResponse(NSURLRequest *request, NSURLResponse *response, NSData *data);
 static NSString *ZZProtocolBodyPreviewForDebug(NSData *data);
+static void ZZRecordNetworkTaskResume(NSURLSessionTask *task);
 
 // All private selectors/helpers are declared before first use.
 @interface NSURLSession (ZZFilterObserveForward)
@@ -625,6 +630,35 @@ static void ZZObserveDetailResponse(NSURLRequest *request, NSData *data, NSURLRe
     }
 }
 
+static BOOL ZZIsZhuanzhuanNetworkURL(NSURL *url) {
+    NSString *host = url.host.lowercaseString ?: @"";
+    return [host hasSuffix:@"zhuanzhuan.com"] || [host hasSuffix:@"zhuanzhuan.com.cn"];
+}
+
+static void ZZRecordNetworkTaskResume(NSURLSessionTask *task) {
+    if (!task) return;
+    NSURLRequest *request = task.originalRequest ?: task.currentRequest;
+    if (!request || !request.URL || !ZZIsZhuanzhuanNetworkURL(request.URL)) return;
+    if (ZZIsInternalDetailRequest(request)) return;
+
+    NSString *url = request.URL.absoluteString ?: @"";
+    NSString *path = request.URL.path.lowercaseString ?: @"";
+    // Keep this census passive and lightweight. It is intentionally broader
+    // than ZZLooksLikeDetailRequest so an opaque endpoint can be discovered.
+    // Known non-detail health/telemetry traffic is still recorded in the log,
+    // but the popup prefers the latest request whose path is not coke-real.
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) {
+        gObservedNetworkTaskRequests += 1;
+        gObservedNetworkTaskLastURL = url.copy;
+        gObservedNetworkTaskLastMethod = (request.HTTPMethod ?: @"GET").copy;
+        gObservedNetworkTaskLastBody = ZZProtocolBodyPreviewForDebug(request.HTTPBody).copy ?: @"";
+    }
+    ZZFilterDebugWrite(@"[ZZTaskCensus] resume method=%@ path=%@ url=%@ body=%@",
+                       request.HTTPMethod ?: @"GET", path, url,
+                       ZZProtocolBodyPreviewForDebug(request.HTTPBody));
+}
+
 static BOOL ZZTaskWasObserved(NSURLSessionDataTask *task) {
     return objc_getAssociatedObject(task, kZZObservedTaskKey) != nil;
 }
@@ -689,6 +723,7 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL(id self, SEL _cmd, NSURL 
 
 @implementation NSURLSessionTask (ZZFilterResumeObserve)
 - (void)zz_filter_resume {
+    ZZRecordNetworkTaskResume(self);
     [self zz_filter_resume];
     if ([self isKindOfClass:NSURLSessionDataTask.class]) {
         ZZInspectTaskForDetail((NSURLSessionDataTask *)self);
@@ -703,6 +738,26 @@ static NSString *ZZProtocolBodyPreviewForDebug(NSData *data) {
     if (!text.length) text = [[NSString alloc] initWithData:data encoding:NSASCIIStringEncoding];
     if (text.length > 420) text = [text substringToIndex:420];
     return text ?: @"";
+}
+
+NSUInteger ZZObservedNetworkTaskRequests(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedNetworkTaskRequests; }
+}
+
+NSString *ZZObservedNetworkTaskLastURL(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedNetworkTaskLastURL.copy ?: @""; }
+}
+
+NSString *ZZObservedNetworkTaskLastMethod(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedNetworkTaskLastMethod.copy ?: @""; }
+}
+
+NSString *ZZObservedNetworkTaskLastBody(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedNetworkTaskLastBody.copy ?: @""; }
 }
 
 NSUInteger ZZProtocolDetailRequests(void) { ZZEnsureObservedRequestLock(); @synchronized (gObservedRequestLock) { return gProtocolDetailRequests; } }

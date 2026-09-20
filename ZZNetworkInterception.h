@@ -45,5 +45,9 @@ FOUNDATION_EXPORT NSString *ZZProtocolDetailLastMethod(void);
 FOUNDATION_EXPORT NSString *ZZProtocolDetailLastBody(void);
 FOUNDATION_EXPORT void ZZRecordProtocolDetailRequest(NSURLRequest * _Nullable request);
 FOUNDATION_EXPORT void ZZRecordProtocolDetailResponse(NSURLRequest * _Nullable request, NSURLResponse * _Nullable response, NSData * _Nullable data);
+FOUNDATION_EXPORT NSUInteger ZZObservedNetworkTaskRequests(void);
+FOUNDATION_EXPORT NSString *ZZObservedNetworkTaskLastURL(void);
+FOUNDATION_EXPORT NSString *ZZObservedNetworkTaskLastMethod(void);
+FOUNDATION_EXPORT NSString *ZZObservedNetworkTaskLastBody(void);
 
 NS_ASSUME_NONNULL_END
