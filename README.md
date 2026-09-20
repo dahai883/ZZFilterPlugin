@@ -1,6 +1,6 @@
-# ZZFilterPlugin v57
+# ZZFilterPlugin v58
 
-## v57 透明观察诊断版
+## v58 透明观察诊断版
 - 保留 v56 的被动观察策略和紧凑状态栏。
 - 新增“观察 2xx”独立统计：区分“App 实际返回的任意 2xx”和“通过详情候选判定的 2xx”。
 - 新增最后一个实际观察到的 2xx URL / Method / Body / Content-Type / 字节数诊断数据。

@@ -370,8 +370,11 @@ static NSString *ZZCompactDiagnosticURL(id value, NSUInteger maxLength) {
     NSUInteger observedDetailResponses = ZZObservedDetailResponses();
     NSUInteger observedDetail2xx = ZZObservedDetail2xxResponses();
     NSUInteger observedAny2xx = ZZObservedDetailAny2xxResponses();
-    NSString *observedAny2xxURL = ZZCompactDiagnosticURL(ZZObservedDetailLastObserved2xxURL(), 52);
+    NSString *observedAny2xxURL = ZZCompactDiagnosticURL(ZZObservedDetailLastObserved2xxURL(), 46);
     NSString *observedAny2xxMethod = ZZCompactDiagnosticText(ZZObservedDetailLastObserved2xxMethod(), 8);
+    NSString *observedAny2xxType = ZZCompactDiagnosticText(ZZObservedDetailLastObserved2xxContentType(), 24);
+    NSString *observedAny2xxBody = ZZCompactDiagnosticText(ZZObservedDetailLastObserved2xxBody(), 54);
+    NSUInteger observedAny2xxBytes = ZZObservedDetailLastObserved2xxBytes();
     NSUInteger observedDetailVersionMatches = ZZObservedDetailVersionMatches();
     NSInteger observedDetailLastStatus = ZZObservedDetailLastStatus();
     NSString *observedDetailAllow = ZZCompactDiagnosticText(ZZObservedDetailLastAllow(), 18);
@@ -427,7 +430,13 @@ static NSString *ZZCompactDiagnosticURL(id value, NSUInteger maxLength) {
                       (unsigned long)observedAny2xx,
                       (unsigned long)observedDetail2xx];
     if (observedAny2xx > 0 && observedAny2xxURL.length) {
-        [out appendFormat:@"观察2xx：%@ %@\n", observedAny2xxMethod, observedAny2xxURL];
+        [out appendFormat:@"2xx：%@ %@ · %luB\n", observedAny2xxMethod, observedAny2xxURL, (unsigned long)observedAny2xxBytes];
+        if (observedAny2xxType.length) {
+            [out appendFormat:@"2xx类型：%@\n", observedAny2xxType];
+        }
+        if (observedAny2xxBody.length) {
+            [out appendFormat:@"2xx摘要：%@\n", observedAny2xxBody];
+        }
     } else {
         [out appendFormat:@"观察状态：%ld\n", (long)observedDetailLastStatus];
     }
