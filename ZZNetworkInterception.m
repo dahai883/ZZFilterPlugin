@@ -43,6 +43,10 @@ static NSUInteger gObservedNetworkTaskRequests;
 static NSString *gObservedNetworkTaskLastURL;
 static NSString *gObservedNetworkTaskLastMethod;
 static NSString *gObservedNetworkTaskLastBody;
+static NSUInteger gObservedNetworkTaskCandidateRequests;
+static NSString *gObservedNetworkTaskCandidateURL;
+static NSString *gObservedNetworkTaskCandidateMethod;
+static NSString *gObservedNetworkTaskCandidateBody;
 static NSObject *gDetailCaptureLock;
 static NSObject *gObservedRequestLock;
 static __thread BOOL gZZInsideObserverRequest = NO;
@@ -60,6 +64,7 @@ static BOOL ZZIsExcludedDetailResponseURL(NSURL *url);
 static BOOL ZZLooksLikeDetailResponse(NSURLRequest *request, NSURLResponse *response, NSData *data);
 static NSString *ZZProtocolBodyPreviewForDebug(NSData *data);
 static void ZZRecordNetworkTaskResume(NSURLSessionTask *task);
+static BOOL ZZLooksLikeTaskCandidate(NSURLRequest *request);
 
 // All private selectors/helpers are declared before first use.
 @interface NSURLSession (ZZFilterObserveForward)
@@ -647,16 +652,40 @@ static void ZZRecordNetworkTaskResume(NSURLSessionTask *task) {
     // than ZZLooksLikeDetailRequest so an opaque endpoint can be discovered.
     // Known non-detail health/telemetry traffic is still recorded in the log,
     // but the popup prefers the latest request whose path is not coke-real.
+    NSString *bodyPreview = ZZProtocolBodyPreviewForDebug(request.HTTPBody).copy ?: @"";
+    NSString *method = (request.HTTPMethod ?: @"GET").copy;
+    BOOL candidate = ZZLooksLikeTaskCandidate(request);
     ZZEnsureObservedRequestLock();
     @synchronized (gObservedRequestLock) {
         gObservedNetworkTaskRequests += 1;
         gObservedNetworkTaskLastURL = url.copy;
-        gObservedNetworkTaskLastMethod = (request.HTTPMethod ?: @"GET").copy;
-        gObservedNetworkTaskLastBody = ZZProtocolBodyPreviewForDebug(request.HTTPBody).copy ?: @"";
+        gObservedNetworkTaskLastMethod = method;
+        gObservedNetworkTaskLastBody = bodyPreview;
+        if (candidate) {
+            gObservedNetworkTaskCandidateRequests += 1;
+            gObservedNetworkTaskCandidateURL = url.copy;
+            gObservedNetworkTaskCandidateMethod = method;
+            gObservedNetworkTaskCandidateBody = bodyPreview;
+        }
     }
-    ZZFilterDebugWrite(@"[ZZTaskCensus] resume method=%@ path=%@ url=%@ body=%@",
-                       request.HTTPMethod ?: @"GET", path, url,
-                       ZZProtocolBodyPreviewForDebug(request.HTTPBody));
+    ZZFilterDebugWrite(@"[ZZTaskCensus] resume method=%@ candidate=%@ path=%@ url=%@ body=%@",
+                       method, candidate ? @"YES" : @"NO", path, url, bodyPreview);
+}
+
+static BOOL ZZLooksLikeTaskCandidate(NSURLRequest *request) {
+    if (!request || !request.URL || ZZIsInternalDetailRequest(request)) return NO;
+    NSURL *url = request.URL;
+    if (ZZIsExcludedDetailResponseURL(url)) return NO;
+    NSString *path = url.path.lowercaseString ?: @"";
+    NSString *absolute = url.absoluteString.lowercaseString ?: @"";
+    NSString *body = ZZProtocolBodyPreviewForDebug(request.HTTPBody).lowercaseString ?: @"";
+    if ([path containsString:@"detail"] || [path containsString:@"goods"] ||
+        [path containsString:@"product"] || [path containsString:@"item"] ||
+        [path containsString:@"streamline"]) return YES;
+    if ([absolute containsString:@"productid="] || [absolute containsString:@"goodsid="] ||
+        [absolute containsString:@"itemid="] || [body containsString:@"productid"] ||
+        [body containsString:@"goodsid"] || [body containsString:@"itemid"]) return YES;
+    return NO;
 }
 
 static BOOL ZZTaskWasObserved(NSURLSessionDataTask *task) {
@@ -758,6 +787,26 @@ NSString *ZZObservedNetworkTaskLastMethod(void) {
 NSString *ZZObservedNetworkTaskLastBody(void) {
     ZZEnsureObservedRequestLock();
     @synchronized (gObservedRequestLock) { return gObservedNetworkTaskLastBody.copy ?: @""; }
+}
+
+NSUInteger ZZObservedNetworkTaskCandidateRequests(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedNetworkTaskCandidateRequests; }
+}
+
+NSString *ZZObservedNetworkTaskCandidateURL(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedNetworkTaskCandidateURL.copy ?: @""; }
+}
+
+NSString *ZZObservedNetworkTaskCandidateMethod(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedNetworkTaskCandidateMethod.copy ?: @""; }
+}
+
+NSString *ZZObservedNetworkTaskCandidateBody(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedNetworkTaskCandidateBody.copy ?: @""; }
 }
 
 NSUInteger ZZProtocolDetailRequests(void) { ZZEnsureObservedRequestLock(); @synchronized (gObservedRequestLock) { return gProtocolDetailRequests; } }

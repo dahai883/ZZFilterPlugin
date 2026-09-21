@@ -49,5 +49,9 @@ FOUNDATION_EXPORT NSUInteger ZZObservedNetworkTaskRequests(void);
 FOUNDATION_EXPORT NSString *ZZObservedNetworkTaskLastURL(void);
 FOUNDATION_EXPORT NSString *ZZObservedNetworkTaskLastMethod(void);
 FOUNDATION_EXPORT NSString *ZZObservedNetworkTaskLastBody(void);
+FOUNDATION_EXPORT NSUInteger ZZObservedNetworkTaskCandidateRequests(void);
+FOUNDATION_EXPORT NSString *ZZObservedNetworkTaskCandidateURL(void);
+FOUNDATION_EXPORT NSString *ZZObservedNetworkTaskCandidateMethod(void);
+FOUNDATION_EXPORT NSString *ZZObservedNetworkTaskCandidateBody(void);
 
 NS_ASSUME_NONNULL_END

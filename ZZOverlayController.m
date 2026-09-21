@@ -403,6 +403,10 @@ static NSString *ZZCompactDiagnosticURL(id value, NSUInteger maxLength) {
     NSString *lastNetworkTaskMethod = ZZCompactDiagnosticText(ZZObservedNetworkTaskLastMethod(), 8);
     NSString *lastNetworkTaskURL = ZZCompactDiagnosticURL(ZZObservedNetworkTaskLastURL(), 54);
     NSString *lastNetworkTaskBody = ZZCompactDiagnosticText(ZZObservedNetworkTaskLastBody(), 40);
+    NSUInteger taskCandidates = ZZObservedNetworkTaskCandidateRequests();
+    NSString *lastTaskCandidateMethod = ZZCompactDiagnosticText(ZZObservedNetworkTaskCandidateMethod(), 8);
+    NSString *lastTaskCandidateURL = ZZCompactDiagnosticURL(ZZObservedNetworkTaskCandidateURL(), 54);
+    NSString *lastTaskCandidateBody = ZZCompactDiagnosticText(ZZObservedNetworkTaskCandidateBody(), 40);
 
     // v55: diagnostics are intentionally compact. UIAlertController displays
     // its message below the title, so a long diagnostic string makes the alert
@@ -456,8 +460,13 @@ static NSString *ZZCompactDiagnosticURL(id value, NSUInteger maxLength) {
             [out appendFormat:@"2xx摘要：%@\n", lastObserved2xxBody];
         }
     }
-    [out appendFormat:@"任务观察：%lu\n", (unsigned long)observedNetworkTasks];
-    if (![lastNetworkTaskURL isEqualToString:@"-"] && lastNetworkTaskURL.length) {
+    [out appendFormat:@"任务观察：%lu / 候选：%lu\n", (unsigned long)observedNetworkTasks, (unsigned long)taskCandidates];
+    if (![lastTaskCandidateURL isEqualToString:@"-"] && lastTaskCandidateURL.length) {
+        [out appendFormat:@"任务候选：%@ %@\n", lastTaskCandidateMethod, lastTaskCandidateURL];
+        if (![lastTaskCandidateBody isEqualToString:@"-"] && lastTaskCandidateBody.length) {
+            [out appendFormat:@"候选Body：%@\n", lastTaskCandidateBody];
+        }
+    } else if (![lastNetworkTaskURL isEqualToString:@"-"] && lastNetworkTaskURL.length) {
         [out appendFormat:@"任务最后：%@ %@\n", lastNetworkTaskMethod, lastNetworkTaskURL];
         if (![lastNetworkTaskBody isEqualToString:@"-"] && lastNetworkTaskBody.length) {
             [out appendFormat:@"任务Body：%@\n", lastNetworkTaskBody];

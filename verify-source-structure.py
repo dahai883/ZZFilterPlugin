@@ -113,6 +113,31 @@ for token in [
         print(f'FAIL ZZNetworkInterception.m: missing failure diagnostic token: {token}')
         fail = True
 
+# v62: task census must keep a separate candidate stream so noisy telemetry
+# such as /v1/coke-real cannot hide the useful product-detail request.
+for decl in [
+    'FOUNDATION_EXPORT NSUInteger ZZObservedNetworkTaskCandidateRequests(void);',
+    'FOUNDATION_EXPORT NSString *ZZObservedNetworkTaskCandidateURL(void);',
+    'FOUNDATION_EXPORT NSString *ZZObservedNetworkTaskCandidateMethod(void);',
+    'FOUNDATION_EXPORT NSString *ZZObservedNetworkTaskCandidateBody(void);',
+]:
+    if decl not in net_header:
+        print(f'FAIL ZZNetworkInterception.h: missing v62 task candidate declaration: {decl}')
+        fail = True
+
+for token in [
+    'ZZLooksLikeTaskCandidate',
+    'gObservedNetworkTaskCandidateRequests',
+    'gObservedNetworkTaskCandidateURL',
+    'gObservedNetworkTaskCandidateMethod',
+    'gObservedNetworkTaskCandidateBody',
+    '任务候选',
+]:
+    if token not in net and token != '任务候选':
+        print(f'FAIL ZZNetworkInterception.m: missing v62 task candidate token: {token}')
+        fail = True
+
+
 if fail:
     sys.exit(1)
 print('STRUCTURE CHECK PASSED')
