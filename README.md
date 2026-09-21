@@ -1,4 +1,4 @@
-# ZZFilterPlugin v60
+# ZZFilterPlugin v64
 
 ## v58 透明观察诊断版
 - 保留 v56 的被动观察策略和紧凑状态栏。
@@ -53,3 +53,14 @@ Open the product detail page, refresh the ZZFilterPlugin status, and check `任�
 - 对 <=1MB 的候选/含系统版本响应提取 iOS 版本，并尝试关联商品 ID。
 - 明确排除 /v1/coke-real，避免无关 2xx 覆盖诊断。
 - 状态框新增“网络响应 / 版本载荷 / 载荷最后 / 载荷版本 / 载荷摘要”。
+
+
+## v64 changes
+- 修复 v63 GitHub Actions 编译错误：`ZZIsZhuanzhuanNetworkURL` 在首次调用前缺少静态函数前置声明。
+- 保持函数定义为 `static`，并在首次使用前显式声明，避免 Clang 的 `-Wimplicit-function-declaration` 与 `static declaration follows non-static declaration`。
+- 强化源码结构检查：要求该内部函数的前置声明存在。
+- 不改变 v63 的被动网络响应普查和系统版本载荷扫描逻辑。
+- 不增加主动网络请求。
+
+## v64 test focus
+本版首先用于确认 Actions 能完整编译通过。编译成功后再注入转转，继续观察 v63 的“网络响应 / 版本载荷”诊断结果。

@@ -79,6 +79,7 @@ required_decls = [
     'static NSString *ZZExtractVersionFromFlatText(NSString *value);',
     'static void ZZRecordObservedDetailRequest(NSURLRequest *request);',
     'static BOOL ZZLooksLikeDetailResponse(NSURLRequest *request, NSURLResponse *response, NSData *data);',
+    'static BOOL ZZIsZhuanzhuanNetworkURL(NSURL *url);',
 ]
 for decl in required_decls:
     if net.find(decl) < 0:

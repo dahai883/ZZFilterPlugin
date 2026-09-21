@@ -60,6 +60,7 @@ static __thread BOOL gZZInsideObserverRequest = NO;
 static const void *kZZObservedTaskKey = &kZZObservedTaskKey;
 
 static void ZZEnsureDetailCaptureLock(void);
+static BOOL ZZIsZhuanzhuanNetworkURL(NSURL *url);
 static void ZZEnsureObservedRequestLock(void);
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, SEL _cmd, NSURLRequest *request, void (^completion)(NSData *, NSURLResponse *, NSError *));
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest(id self, SEL _cmd, NSURLRequest *request);
