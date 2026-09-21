@@ -47,6 +47,13 @@ static NSUInteger gObservedNetworkTaskCandidateRequests;
 static NSString *gObservedNetworkTaskCandidateURL;
 static NSString *gObservedNetworkTaskCandidateMethod;
 static NSString *gObservedNetworkTaskCandidateBody;
+static NSUInteger gObservedNetworkPayloadResponses;
+static NSUInteger gObservedNetworkVersionPayloads;
+static NSInteger gObservedNetworkLastPayloadStatusCode;
+static NSString *gObservedNetworkLastPayloadURL;
+static NSString *gObservedNetworkLastPayloadMethod;
+static NSString *gObservedNetworkLastPayloadBody;
+static NSString *gObservedNetworkLastPayloadVersion;
 static NSObject *gDetailCaptureLock;
 static NSObject *gObservedRequestLock;
 static __thread BOOL gZZInsideObserverRequest = NO;
@@ -60,11 +67,13 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL(id self, SEL _cmd, NSURL 
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL_completion(id self, SEL _cmd, NSURL *url, void (^completion)(NSData *, NSURLResponse *, NSError *));
 static NSString *ZZExtractVersionFromFlatText(NSString *value);
 static void ZZRecordObservedDetailRequest(NSURLRequest *request);
+static NSUInteger ZZCaptureActualDetailResponse(id obj, NSString *requestPID, NSUInteger depth);
 static BOOL ZZIsExcludedDetailResponseURL(NSURL *url);
 static BOOL ZZLooksLikeDetailResponse(NSURLRequest *request, NSURLResponse *response, NSData *data);
 static NSString *ZZProtocolBodyPreviewForDebug(NSData *data);
 static void ZZRecordNetworkTaskResume(NSURLSessionTask *task);
 static BOOL ZZLooksLikeTaskCandidate(NSURLRequest *request);
+static void ZZObserveNetworkCompletionResponse(NSURLRequest *request, NSData *data, NSURLResponse *response, NSError *error);
 
 // All private selectors/helpers are declared before first use.
 @interface NSURLSession (ZZFilterObserveForward)
@@ -493,6 +502,61 @@ static BOOL ZZLooksLikeDetailResponse(NSURLRequest *request, NSURLResponse *resp
     return detailPath;
 }
 
+static void ZZObserveNetworkCompletionResponse(NSURLRequest *request, NSData *data, NSURLResponse *response, NSError *error) {
+    if (!request || !request.URL || ZZIsInternalDetailRequest(request)) return;
+    if (!ZZIsZhuanzhuanNetworkURL(request.URL)) return;
+    if (ZZIsExcludedDetailResponseURL(response.URL ?: request.URL)) return;
+
+    NSInteger status = [response isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)response).statusCode : 0;
+    NSString *url = response.URL.absoluteString ?: request.URL.absoluteString ?: @"";
+    NSString *method = request.HTTPMethod ?: @"GET";
+    NSString *preview = ZZProtocolBodyPreviewForDebug(data);
+    // Keep the generic census bounded: only inspect reasonably small completion
+    // payloads. This is passive and does not alter the response delivered to the app.
+    if (data.length > (1024 * 1024)) return;
+
+    NSString *version = ZZExtractVersionFromRawResponseData(data);
+    BOOL hasVersion = version.length > 0;
+    BOOL candidate = ZZLooksLikeTaskCandidate(request);
+    if (!candidate && !hasVersion) return;
+
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) {
+        gObservedNetworkPayloadResponses += 1;
+        gObservedNetworkLastPayloadStatusCode = status;
+        gObservedNetworkLastPayloadURL = url.copy;
+        gObservedNetworkLastPayloadMethod = method.copy;
+        gObservedNetworkLastPayloadBody = preview.copy ?: @"";
+        gObservedNetworkLastPayloadVersion = version.copy ?: @"";
+        if (hasVersion) gObservedNetworkVersionPayloads += 1;
+    }
+
+    ZZFilterDebugWrite(@"[ZZPayloadCensus] response method=%@ status=%ld candidate=%@ version=%@ bytes=%lu url=%@ body=%@ error=%@",
+                       method, (long)status, candidate ? @"YES" : @"NO", version ?: @"",
+                       (unsigned long)data.length, url, preview, error.localizedDescription ?: @"none");
+
+    if (status < 200 || status >= 300 || !hasVersion) return;
+
+    NSString *pid = ZZProductIDFromRequest(request);
+    if (!pid.length) pid = ZZProductIDFromResponseURL(response.URL);
+
+    id obj = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:NULL];
+    if (obj) {
+        NSUInteger before = ZZDetailCapturedEntries();
+        NSUInteger captured = ZZCaptureActualDetailResponse(obj, pid, 0);
+        if (captured == 0 && pid.length) {
+            ZZRecordCapturedEntry(@{ @"detail": obj, @"zzSystemVersion": version }, pid);
+            captured = 1;
+        }
+        if (captured || before != ZZDetailCapturedEntries()) {
+            ZZFilterDebugWrite(@"[ZZPayloadCensus] version-capture version=%@ pid=%@ captured=%lu url=%@",
+                               version, pid ?: @"", (unsigned long)(ZZDetailCapturedEntries() - before), url);
+        }
+    } else if (pid.length) {
+        ZZRecordCapturedEntry(@{ @"detailText": preview ?: @"", @"zzSystemVersion": version }, pid);
+    }
+}
+
 static void ZZRecordObservedDetailRequest(NSURLRequest *request) {
     if (!request || !request.URL || gZZInsideObserverRequest || ZZIsInternalDetailRequest(request)) return;
     ZZEnsureObservedRequestLock();
@@ -709,12 +773,14 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, S
     if (!request) return [(NSURLSession *)self zz_filter_dataTaskWithRequest_completion:request completionHandler:completion];
 
     BOOL isDetail = !ZZIsInternalDetailRequest(request) && ZZLooksLikeDetailRequest(request);
+    BOOL isZhuanzhuan = !ZZIsInternalDetailRequest(request) && ZZIsZhuanzhuanNetworkURL(request.URL);
     void (^wrappedCompletion)(NSData *, NSURLResponse *, NSError *) = completion;
-    if (isDetail && !gZZInsideObserverRequest) {
+    if ((isDetail || isZhuanzhuan) && !gZZInsideObserverRequest) {
         void (^originalCompletion)(NSData *, NSURLResponse *, NSError *) = [completion copy];
         NSURLRequest *observedRequest = request.copy;
         wrappedCompletion = ^(NSData *data, NSURLResponse *response, NSError *error) {
-            ZZObserveDetailResponse(observedRequest, data, response, error);
+            ZZObserveNetworkCompletionResponse(observedRequest, data, response, error);
+            if (isDetail) ZZObserveDetailResponse(observedRequest, data, response, error);
             if (originalCompletion) originalCompletion(data, response, error);
         };
     }
@@ -733,11 +799,13 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL_completion(id self, SEL _
 
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
     BOOL isDetail = !ZZIsInternalDetailRequest(request) && ZZLooksLikeDetailRequest(request);
-    if (isDetail && !gZZInsideObserverRequest) {
+    BOOL isZhuanzhuan = !ZZIsInternalDetailRequest(request) && ZZIsZhuanzhuanNetworkURL(request.URL);
+    if ((isDetail || isZhuanzhuan) && !gZZInsideObserverRequest) {
         void (^originalCompletion)(NSData *, NSURLResponse *, NSError *) = [completion copy];
         NSURLRequest *observedRequest = request.copy;
         completion = ^(NSData *data, NSURLResponse *response, NSError *error) {
-            ZZObserveDetailResponse(observedRequest, data, response, error);
+            ZZObserveNetworkCompletionResponse(observedRequest, data, response, error);
+            if (isDetail) ZZObserveDetailResponse(observedRequest, data, response, error);
             if (originalCompletion) originalCompletion(data, response, error);
         };
     }
@@ -807,6 +875,41 @@ NSString *ZZObservedNetworkTaskCandidateMethod(void) {
 NSString *ZZObservedNetworkTaskCandidateBody(void) {
     ZZEnsureObservedRequestLock();
     @synchronized (gObservedRequestLock) { return gObservedNetworkTaskCandidateBody.copy ?: @""; }
+}
+
+NSUInteger ZZObservedNetworkPayloadResponses(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedNetworkPayloadResponses; }
+}
+
+NSUInteger ZZObservedNetworkVersionPayloads(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedNetworkVersionPayloads; }
+}
+
+NSInteger ZZObservedNetworkLastPayloadStatus(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedNetworkLastPayloadStatusCode; }
+}
+
+NSString *ZZObservedNetworkLastPayloadURL(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedNetworkLastPayloadURL.copy ?: @""; }
+}
+
+NSString *ZZObservedNetworkLastPayloadMethod(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedNetworkLastPayloadMethod.copy ?: @""; }
+}
+
+NSString *ZZObservedNetworkLastPayloadBody(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedNetworkLastPayloadBody.copy ?: @""; }
+}
+
+NSString *ZZObservedNetworkLastPayloadVersion(void) {
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) { return gObservedNetworkLastPayloadVersion.copy ?: @""; }
 }
 
 NSUInteger ZZProtocolDetailRequests(void) { ZZEnsureObservedRequestLock(); @synchronized (gObservedRequestLock) { return gProtocolDetailRequests; } }

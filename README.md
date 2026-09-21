@@ -45,3 +45,11 @@ Open the same product detail page and open the ZZFilterPlugin status. The import
 
 ## v61 test focus
 Open the product detail page, refresh the ZZFilterPlugin status, and check `任务最后`. If it is not `coke-real`, its path/body can be used to identify the actual product-detail transport.
+
+
+## v63
+- 继续保持被动模式，不主动生成详情请求。
+- 在 NSURLSession completionHandler 路径增加受限的转转响应普查。
+- 对 <=1MB 的候选/含系统版本响应提取 iOS 版本，并尝试关联商品 ID。
+- 明确排除 /v1/coke-real，避免无关 2xx 覆盖诊断。
+- 状态框新增“网络响应 / 版本载荷 / 载荷最后 / 载荷版本 / 载荷摘要”。

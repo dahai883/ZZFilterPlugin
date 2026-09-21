@@ -472,6 +472,20 @@ static NSString *ZZCompactDiagnosticURL(id value, NSUInteger maxLength) {
             [out appendFormat:@"任务Body：%@\n", lastNetworkTaskBody];
         }
     }
+    NSUInteger payloadResponses = ZZObservedNetworkPayloadResponses();
+    NSUInteger versionPayloads = ZZObservedNetworkVersionPayloads();
+    NSInteger payloadStatus = ZZObservedNetworkLastPayloadStatus();
+    NSString *payloadURL = ZZObservedNetworkLastPayloadURL();
+    NSString *payloadMethod = ZZObservedNetworkLastPayloadMethod();
+    NSString *payloadBody = ZZObservedNetworkLastPayloadBody();
+    NSString *payloadVersion = ZZObservedNetworkLastPayloadVersion();
+    [out appendFormat:@"网络响应：%lu / 版本载荷：%lu\n",
+                      (unsigned long)payloadResponses, (unsigned long)versionPayloads];
+    if (payloadURL.length) {
+        [out appendFormat:@"载荷最后：%@ %ld %@\n", payloadMethod ?: @"GET", (long)payloadStatus, payloadURL];
+        if (payloadVersion.length) [out appendFormat:@"载荷版本：iOS %@\n", payloadVersion];
+        if (payloadBody.length) [out appendFormat:@"载荷摘要：%@\n", payloadBody];
+    }
     [out appendFormat:@"协议详情：请求 %lu / 响应 %lu / 2xx %lu / 失败 %lu\n",
                       (unsigned long)protocolDetailRequests,
                       (unsigned long)protocolDetailResponses,

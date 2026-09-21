@@ -113,6 +113,32 @@ for token in [
         print(f'FAIL ZZNetworkInterception.m: missing failure diagnostic token: {token}')
         fail = True
 
+# v63: completion-handler payload census must expose generic response/OS-version
+# hits without actively generating requests.
+for decl in [
+    'FOUNDATION_EXPORT NSUInteger ZZObservedNetworkPayloadResponses(void);',
+    'FOUNDATION_EXPORT NSUInteger ZZObservedNetworkVersionPayloads(void);',
+    'FOUNDATION_EXPORT NSInteger ZZObservedNetworkLastPayloadStatus(void);',
+    'FOUNDATION_EXPORT NSString *ZZObservedNetworkLastPayloadURL(void);',
+    'FOUNDATION_EXPORT NSString *ZZObservedNetworkLastPayloadMethod(void);',
+    'FOUNDATION_EXPORT NSString *ZZObservedNetworkLastPayloadBody(void);',
+    'FOUNDATION_EXPORT NSString *ZZObservedNetworkLastPayloadVersion(void);',
+]:
+    if decl not in net_header:
+        print(f'FAIL ZZNetworkInterception.h: missing v63 payload declaration: {decl}')
+        fail = True
+
+for token in [
+    'ZZObserveNetworkCompletionResponse',
+    'gObservedNetworkPayloadResponses',
+    'gObservedNetworkVersionPayloads',
+    'ZZExtractVersionFromRawResponseData(data)',
+    'data.length > (1024 * 1024)',
+]:
+    if token not in net:
+        print(f'FAIL ZZNetworkInterception.m: missing v63 payload token: {token}')
+        fail = True
+
 # v62: task census must keep a separate candidate stream so noisy telemetry
 # such as /v1/coke-real cannot hide the useful product-detail request.
 for decl in [
