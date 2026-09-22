@@ -165,6 +165,41 @@ for token in [
         fail = True
 
 
+# v65: custom NSURLSession delegate data flows must be observable without creating requests.
+for token in [
+    'ZZInstallDelegateObservationForClass',
+    'ZZDelegateDidReceiveData',
+    'ZZDelegateDidComplete',
+    'initWithConfiguration:delegate:delegateQueue:',
+    'URLSession:dataTask:didReceiveData:',
+    'URLSession:task:didCompleteWithError:',
+    'kZZDelegateTaskDataKey',
+    '(1024 * 1024)',
+]:
+    if token not in net:
+        print(f'FAIL ZZNetworkInterception.m: missing v65 delegate census token: {token}')
+        fail = True
+
+# v65: avoid accidentally exchanging implementations on a delegate superclass.
+if 'class_copyMethodList(delegateClass' not in net or 'class_addMethod(delegateClass, dataSel' not in net or 'class_addMethod(delegateClass, completeSel' not in net:
+    print('FAIL ZZNetworkInterception.m: delegate swizzle does not protect inherited implementations')
+    fail = True
+
+
+# v66: upload-task completion and delegate response-header coverage.
+for token in [
+    'uploadTaskWithRequest:fromData:completionHandler:',
+    'uploadTaskWithRequest:fromFile:completionHandler:',
+    'ZZ_filter_uploadTaskWithRequest_fromData_completion',
+    'ZZ_filter_uploadTaskWithRequest_fromFile_completion',
+    'didReceiveResponse:completionHandler:',
+    'ZZDelegateDidReceiveResponse',
+    'host=%@',
+]:
+    if token not in net:
+        print(f'FAIL ZZNetworkInterception.m: missing v66 token: {token}')
+        fail = True
+
 if fail:
     sys.exit(1)
 print('STRUCTURE CHECK PASSED')

@@ -58,6 +58,8 @@ static NSObject *gDetailCaptureLock;
 static NSObject *gObservedRequestLock;
 static __thread BOOL gZZInsideObserverRequest = NO;
 static const void *kZZObservedTaskKey = &kZZObservedTaskKey;
+static const void *kZZDelegateTaskDataKey = &kZZDelegateTaskDataKey;
+static NSMutableSet<NSValue *> *gSwizzledDelegateClasses;
 
 static void ZZEnsureDetailCaptureLock(void);
 static BOOL ZZIsZhuanzhuanNetworkURL(NSURL *url);
@@ -66,6 +68,8 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, S
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest(id self, SEL _cmd, NSURLRequest *request);
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL(id self, SEL _cmd, NSURL *url);
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL_completion(id self, SEL _cmd, NSURL *url, void (^completion)(NSData *, NSURLResponse *, NSError *));
+static NSURLSessionUploadTask *ZZ_filter_uploadTaskWithRequest_fromData_completion(id self, SEL _cmd, NSURLRequest *request, NSData *bodyData, void (^completion)(NSData *, NSURLResponse *, NSError *));
+static NSURLSessionUploadTask *ZZ_filter_uploadTaskWithRequest_fromFile_completion(id self, SEL _cmd, NSURLRequest *request, NSURL *fileURL, void (^completion)(NSData *, NSURLResponse *, NSError *));
 static NSString *ZZExtractVersionFromFlatText(NSString *value);
 static void ZZRecordObservedDetailRequest(NSURLRequest *request);
 static NSUInteger ZZCaptureActualDetailResponse(id obj, NSString *requestPID, NSUInteger depth);
@@ -75,6 +79,10 @@ static NSString *ZZProtocolBodyPreviewForDebug(NSData *data);
 static void ZZRecordNetworkTaskResume(NSURLSessionTask *task);
 static BOOL ZZLooksLikeTaskCandidate(NSURLRequest *request);
 static void ZZObserveNetworkCompletionResponse(NSURLRequest *request, NSData *data, NSURLResponse *response, NSError *error);
+static void ZZInstallDelegateObservationForClass(Class delegateClass);
+static void ZZDelegateDidReceiveData(id self, SEL _cmd, NSURLSession *session, NSURLSessionDataTask *task, NSData *data);
+static void ZZDelegateDidReceiveResponse(id self, SEL _cmd, NSURLSession *session, NSURLSessionDataTask *task, NSURLResponse *response, void (^completionHandler)(NSURLSessionResponseDisposition));
+static void ZZDelegateDidComplete(id self, SEL _cmd, NSURLSession *session, NSURLSessionTask *task, NSError *error);
 
 // All private selectors/helpers are declared before first use.
 @interface NSURLSession (ZZFilterObserveForward)
@@ -82,10 +90,18 @@ static void ZZObserveNetworkCompletionResponse(NSURLRequest *request, NSData *da
 - (NSURLSessionDataTask *)zz_filter_dataTaskWithRequest_completion:(NSURLRequest *)request completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler;
 - (NSURLSessionDataTask *)zz_filter_dataTaskWithURL:(NSURL *)url;
 - (NSURLSessionDataTask *)zz_filter_dataTaskWithURL_completion:(NSURL *)url completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler;
+- (NSURLSessionUploadTask *)zz_filter_uploadTaskWithRequest_fromData_completion:(NSURLRequest *)request fromData:(NSData *)bodyData completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler;
+- (NSURLSessionUploadTask *)zz_filter_uploadTaskWithRequest_fromFile_completion:(NSURLRequest *)request fromFile:(NSURL *)fileURL completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler;
 @end
 
 @interface NSURLSessionTask (ZZFilterResumeObserve)
 - (void)zz_filter_resume;
+@end
+
+@interface NSObject (ZZFilterDelegateObserveForward)
+- (void)zz_filter_delegate_URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)task didReceiveData:(NSData *)data;
+- (void)zz_filter_delegate_URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)task didReceiveResponse:(NSURLResponse *)response completionHandler:(void (^)(NSURLSessionResponseDisposition))completionHandler;
+- (void)zz_filter_delegate_URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error;
 @end
 
 // Keep private category declarations and helper prototypes above every use.
@@ -733,8 +749,8 @@ static void ZZRecordNetworkTaskResume(NSURLSessionTask *task) {
             gObservedNetworkTaskCandidateBody = bodyPreview;
         }
     }
-    ZZFilterDebugWrite(@"[ZZTaskCensus] resume method=%@ candidate=%@ path=%@ url=%@ body=%@",
-                       method, candidate ? @"YES" : @"NO", path, url, bodyPreview);
+    ZZFilterDebugWrite(@"[ZZTaskCensus] resume method=%@ candidate=%@ host=%@ path=%@ url=%@ body=%@",
+                       method, candidate ? @"YES" : @"NO", request.URL.host ?: @"", path, url, bodyPreview);
 }
 
 static BOOL ZZLooksLikeTaskCandidate(NSURLRequest *request) {
@@ -769,6 +785,152 @@ static void ZZInspectTaskForDetail(NSURLSessionDataTask *task) {
     ZZRecordObservedDetailRequest(request);
 }
 
+
+static NSMutableData *ZZDelegateBufferForTask(NSURLSessionTask *task, BOOL create) {
+    if (!task) return nil;
+    NSMutableData *buffer = objc_getAssociatedObject(task, kZZDelegateTaskDataKey);
+    if (!buffer && create) {
+        buffer = [NSMutableData data];
+        objc_setAssociatedObject(task, kZZDelegateTaskDataKey, buffer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    return buffer;
+}
+
+static void ZZDelegateDidReceiveResponse(id self, SEL _cmd, NSURLSession *session, NSURLSessionDataTask *task, NSURLResponse *response, void (^completionHandler)(NSURLSessionResponseDisposition)) {
+    (void)_cmd;
+    if (task) {
+        objc_setAssociatedObject(task, kZZDelegateTaskDataKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        NSURLRequest *request = task.originalRequest ?: task.currentRequest;
+        NSInteger status = [response isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)response).statusCode : 0;
+        if (request && ZZIsZhuanzhuanNetworkURL(request.URL) && !ZZIsInternalDetailRequest(request)) {
+            ZZFilterDebugWrite(@"[ZZDelegateCensus] response method=%@ status=%ld host=%@ url=%@ contentType=%@",
+                               request.HTTPMethod ?: @"GET", (long)status, request.URL.host ?: @"",
+                               response.URL.absoluteString ?: request.URL.absoluteString ?: @"",
+                               [response MIMEType] ?: @"");
+        }
+    }
+    if ([self respondsToSelector:@selector(zz_filter_delegate_URLSession:dataTask:didReceiveResponse:completionHandler:)]) {
+        [self zz_filter_delegate_URLSession:session dataTask:task didReceiveResponse:response completionHandler:completionHandler];
+    } else if (completionHandler) {
+        completionHandler(NSURLSessionResponseAllow);
+    }
+}
+
+static void ZZDelegateDidReceiveData(id self, SEL _cmd, NSURLSession *session, NSURLSessionDataTask *task, NSData *data) {
+    (void)_cmd;
+    if (task && data.length && data.length <= (1024 * 1024)) {
+        NSMutableData *buffer = ZZDelegateBufferForTask(task, YES);
+        if (buffer.length <= (1024 * 1024)) {
+            NSUInteger remaining = (1024 * 1024) - buffer.length;
+            if (data.length <= remaining) [buffer appendData:data];
+            else if (remaining > 0) [buffer appendBytes:data.bytes length:remaining];
+        }
+    }
+    if ([self respondsToSelector:@selector(zz_filter_delegate_URLSession:dataTask:didReceiveData:)]) {
+        [self zz_filter_delegate_URLSession:session dataTask:task didReceiveData:data];
+    }
+}
+
+static void ZZDelegateDidComplete(id self, SEL _cmd, NSURLSession *session, NSURLSessionTask *task, NSError *error) {
+    (void)_cmd;
+    if ([task isKindOfClass:NSURLSessionDataTask.class]) {
+        NSURLSessionDataTask *dataTask = (NSURLSessionDataTask *)task;
+        NSMutableData *buffer = ZZDelegateBufferForTask(dataTask, NO);
+        NSData *payload = [buffer copy] ?: [NSData data];
+        NSURLRequest *request = dataTask.originalRequest ?: dataTask.currentRequest;
+        if (request && payload.length) {
+            ZZObserveNetworkCompletionResponse(request, payload, dataTask.response, error);
+            if (ZZLooksLikeDetailRequest(request)) ZZObserveDetailResponse(request, payload, dataTask.response, error);
+        }
+        objc_setAssociatedObject(dataTask, kZZDelegateTaskDataKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    if ([self respondsToSelector:@selector(zz_filter_delegate_URLSession:task:didCompleteWithError:)]) {
+        [self zz_filter_delegate_URLSession:session task:task didCompleteWithError:error];
+    }
+}
+
+static void ZZInstallDelegateObservationForClass(Class delegateClass) {
+    if (!delegateClass) return;
+    ZZEnsureObservedRequestLock();
+    @synchronized (gObservedRequestLock) {
+        if (!gSwizzledDelegateClasses) gSwizzledDelegateClasses = [NSMutableSet set];
+        NSValue *classKey = [NSValue valueWithPointer:(__bridge const void *)(delegateClass)];
+        if ([gSwizzledDelegateClasses containsObject:classKey]) return;
+        [gSwizzledDelegateClasses addObject:classKey];
+    }
+
+    SEL responseSel = @selector(URLSession:dataTask:didReceiveResponse:completionHandler:);
+    Method responseMethod = class_getInstanceMethod(delegateClass, responseSel);
+    if (responseMethod) {
+        unsigned int responseCount = 0;
+        BOOL ownsResponseMethod = NO;
+        Method *responseMethods = class_copyMethodList(delegateClass, &responseCount);
+        for (unsigned int i = 0; i < responseCount; i++) {
+            if (method_getName(responseMethods[i]) == responseSel) { ownsResponseMethod = YES; break; }
+        }
+        free(responseMethods);
+        if (!ownsResponseMethod) {
+            class_addMethod(delegateClass, responseSel, method_getImplementation(responseMethod), method_getTypeEncoding(responseMethod));
+            responseMethod = class_getInstanceMethod(delegateClass, responseSel);
+        }
+        SEL replacementSel = @selector(zz_filter_delegate_URLSession:dataTask:didReceiveResponse:completionHandler:);
+        if (!class_getInstanceMethod(delegateClass, replacementSel)) {
+            class_addMethod(delegateClass, replacementSel, (IMP)ZZDelegateDidReceiveResponse, method_getTypeEncoding(responseMethod));
+        }
+        Method replacement = class_getInstanceMethod(delegateClass, replacementSel);
+        if (replacement) method_exchangeImplementations(responseMethod, replacement);
+    }
+
+    SEL dataSel = @selector(URLSession:dataTask:didReceiveData:);
+    Method dataMethod = class_getInstanceMethod(delegateClass, dataSel);
+    if (dataMethod) {
+        // Ensure the original implementation is owned by this delegate class;
+        // otherwise method_exchangeImplementations could accidentally modify a superclass.
+        unsigned int methodCount = 0;
+        BOOL ownsDataMethod = NO;
+        Method *methods = class_copyMethodList(delegateClass, &methodCount);
+        for (unsigned int i = 0; i < methodCount; i++) {
+            if (method_getName(methods[i]) == dataSel) { ownsDataMethod = YES; break; }
+        }
+        free(methods);
+        if (!ownsDataMethod) {
+            class_addMethod(delegateClass, dataSel, method_getImplementation(dataMethod), method_getTypeEncoding(dataMethod));
+            dataMethod = class_getInstanceMethod(delegateClass, dataSel);
+        }
+        SEL replacementSel = @selector(zz_filter_delegate_URLSession:dataTask:didReceiveData:);
+        if (!class_getInstanceMethod(delegateClass, replacementSel)) {
+            class_addMethod(delegateClass, replacementSel, (IMP)ZZDelegateDidReceiveData, method_getTypeEncoding(dataMethod));
+        }
+        Method replacement = class_getInstanceMethod(delegateClass, replacementSel);
+        if (replacement) method_exchangeImplementations(dataMethod, replacement);
+    }
+
+    SEL completeSel = @selector(URLSession:task:didCompleteWithError:);
+    Method completeMethod = class_getInstanceMethod(delegateClass, completeSel);
+    if (completeMethod) {
+        unsigned int methodCount = 0;
+        BOOL ownsCompleteMethod = NO;
+        Method *methods = class_copyMethodList(delegateClass, &methodCount);
+        for (unsigned int i = 0; i < methodCount; i++) {
+            if (method_getName(methods[i]) == completeSel) { ownsCompleteMethod = YES; break; }
+        }
+        free(methods);
+        if (!ownsCompleteMethod) {
+            class_addMethod(delegateClass, completeSel, method_getImplementation(completeMethod), method_getTypeEncoding(completeMethod));
+            completeMethod = class_getInstanceMethod(delegateClass, completeSel);
+        }
+        SEL replacementSel = @selector(zz_filter_delegate_URLSession:task:didCompleteWithError:);
+        if (!class_getInstanceMethod(delegateClass, replacementSel)) {
+            class_addMethod(delegateClass, replacementSel, (IMP)ZZDelegateDidComplete, method_getTypeEncoding(completeMethod));
+        }
+        Method replacement = class_getInstanceMethod(delegateClass, replacementSel);
+        if (replacement) method_exchangeImplementations(completeMethod, replacement);
+    }
+
+    ZZFilterDebugWrite(@"[ZZDelegateCensus] installed delegate hooks class=%@ data=%@ complete=%@",
+                       NSStringFromClass(delegateClass), dataMethod ? @"YES" : @"NO", completeMethod ? @"YES" : @"NO");
+}
+
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest_completion(id self, SEL _cmd, NSURLRequest *request, void (^completion)(NSData *, NSURLResponse *, NSError *)) {
     (void)_cmd;
     if (!request) return [(NSURLSession *)self zz_filter_dataTaskWithRequest_completion:request completionHandler:completion];
@@ -792,6 +954,55 @@ static NSURLSessionDataTask *ZZ_filter_dataTaskWithRequest(id self, SEL _cmd, NS
     (void)_cmd;
     if (!request) return [(NSURLSession *)self zz_filter_dataTaskWithRequest:request];
     return [(NSURLSession *)self zz_filter_dataTaskWithRequest:request];
+}
+
+static NSURLSessionUploadTask *ZZ_filter_uploadTaskWithRequest_fromData_completion(id self, SEL _cmd, NSURLRequest *request, NSData *bodyData, void (^completion)(NSData *, NSURLResponse *, NSError *)) {
+    (void)_cmd;
+    if (!request) return [(NSURLSession *)self zz_filter_uploadTaskWithRequest_fromData_completion:request fromData:bodyData completionHandler:completion];
+    BOOL isDetail = !ZZIsInternalDetailRequest(request) && ZZLooksLikeDetailRequest(request);
+    BOOL isZhuanzhuan = !ZZIsInternalDetailRequest(request) && ZZIsZhuanzhuanNetworkURL(request.URL);
+    if ((isDetail || isZhuanzhuan) && !gZZInsideObserverRequest) {
+        void (^originalCompletion)(NSData *, NSURLResponse *, NSError *) = [completion copy];
+        NSURLRequest *observedRequest = request.copy;
+        NSData *observedBody = bodyData.copy;
+        completion = ^(NSData *data, NSURLResponse *response, NSError *error) {
+            ZZObserveNetworkCompletionResponse(observedRequest, data, response, error);
+            if (isDetail) ZZObserveDetailResponse(observedRequest, data, response, error);
+            ZZFilterDebugWrite(@"[ZZUploadCensus] completion method=%@ status=%ld bytes=%lu url=%@ requestBody=%@ error=%@",
+                               observedRequest.HTTPMethod ?: @"POST",
+                               [response isKindOfClass:NSHTTPURLResponse.class] ? (long)((NSHTTPURLResponse *)response).statusCode : 0,
+                               (unsigned long)data.length,
+                               response.URL.absoluteString ?: observedRequest.URL.absoluteString ?: @"",
+                               ZZProtocolBodyPreviewForDebug(observedBody),
+                               error.localizedDescription ?: @"none");
+            if (originalCompletion) originalCompletion(data, response, error);
+        };
+    }
+    return [(NSURLSession *)self zz_filter_uploadTaskWithRequest_fromData_completion:request fromData:bodyData completionHandler:completion];
+}
+
+static NSURLSessionUploadTask *ZZ_filter_uploadTaskWithRequest_fromFile_completion(id self, SEL _cmd, NSURLRequest *request, NSURL *fileURL, void (^completion)(NSData *, NSURLResponse *, NSError *)) {
+    (void)_cmd;
+    if (!request) return [(NSURLSession *)self zz_filter_uploadTaskWithRequest_fromFile_completion:request fromFile:fileURL completionHandler:completion];
+    BOOL isDetail = !ZZIsInternalDetailRequest(request) && ZZLooksLikeDetailRequest(request);
+    BOOL isZhuanzhuan = !ZZIsInternalDetailRequest(request) && ZZIsZhuanzhuanNetworkURL(request.URL);
+    if ((isDetail || isZhuanzhuan) && !gZZInsideObserverRequest) {
+        void (^originalCompletion)(NSData *, NSURLResponse *, NSError *) = [completion copy];
+        NSURLRequest *observedRequest = request.copy;
+        completion = ^(NSData *data, NSURLResponse *response, NSError *error) {
+            ZZObserveNetworkCompletionResponse(observedRequest, data, response, error);
+            if (isDetail) ZZObserveDetailResponse(observedRequest, data, response, error);
+            ZZFilterDebugWrite(@"[ZZUploadCensus] file-completion method=%@ status=%ld bytes=%lu url=%@ file=%@ error=%@",
+                               observedRequest.HTTPMethod ?: @"POST",
+                               [response isKindOfClass:NSHTTPURLResponse.class] ? (long)((NSHTTPURLResponse *)response).statusCode : 0,
+                               (unsigned long)data.length,
+                               response.URL.absoluteString ?: observedRequest.URL.absoluteString ?: @"",
+                               fileURL.path ?: @"",
+                               error.localizedDescription ?: @"none");
+            if (originalCompletion) originalCompletion(data, response, error);
+        };
+    }
+    return [(NSURLSession *)self zz_filter_uploadTaskWithRequest_fromFile_completion:request fromFile:fileURL completionHandler:completion];
 }
 
 static NSURLSessionDataTask *ZZ_filter_dataTaskWithURL_completion(id self, SEL _cmd, NSURL *url, void (^completion)(NSData *, NSURLResponse *, NSError *)) {
@@ -1045,6 +1256,19 @@ static void ZZAddProtocolToConfiguration(NSURLSessionConfiguration *configuratio
 - (NSURLSessionDataTask *)zz_filter_dataTaskWithURL_completion:(NSURL *)url completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler { return ZZ_filter_dataTaskWithURL_completion(self, _cmd, url, completionHandler); }
 @end
 
+
+@interface NSURLSession (ZZFilterSessionInitObserve)
+- (instancetype)zz_filter_initWithConfiguration:(NSURLSessionConfiguration *)configuration delegate:(id<NSURLSessionDelegate>)delegate delegateQueue:(NSOperationQueue *)queue;
+@end
+
+@implementation NSURLSession (ZZFilterSessionInitObserve)
+- (instancetype)zz_filter_initWithConfiguration:(NSURLSessionConfiguration *)configuration delegate:(id<NSURLSessionDelegate>)delegate delegateQueue:(NSOperationQueue *)queue {
+    id result = [self zz_filter_initWithConfiguration:configuration delegate:delegate delegateQueue:queue];
+    if (delegate) ZZInstallDelegateObservationForClass(object_getClass(delegate));
+    return result;
+}
+@end
+
 void ZZInstallNetworkInterception(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -1053,6 +1277,9 @@ void ZZInstallNetworkInterception(void) {
         ZZRegisterCookieStorage(NSHTTPCookieStorage.sharedHTTPCookieStorage);
         Class cls = [NSURLSessionConfiguration class];
         Class sessionCls = [NSURLSession class];
+        Method sessionInit = class_getInstanceMethod(sessionCls, @selector(initWithConfiguration:delegate:delegateQueue:));
+        Method sessionInitReplacement = class_getInstanceMethod(sessionCls, @selector(zz_filter_initWithConfiguration:delegate:delegateQueue:));
+        if (sessionInit && sessionInitReplacement) method_exchangeImplementations(sessionInit, sessionInitReplacement);
         Method dataTaskWithCompletion = class_getInstanceMethod(sessionCls, @selector(dataTaskWithRequest:completionHandler:));
         Method replacementCompletion = class_getInstanceMethod(sessionCls, @selector(zz_filter_dataTaskWithRequest_completion:completionHandler:));
         if (dataTaskWithCompletion && replacementCompletion) {
@@ -1080,6 +1307,14 @@ void ZZInstallNetworkInterception(void) {
         if (dataTaskURLSimple && replacementURLSimple) {
             method_exchangeImplementations(dataTaskURLSimple, replacementURLSimple);
         }
+
+        Method uploadDataOriginal = class_getInstanceMethod(sessionCls, @selector(uploadTaskWithRequest:fromData:completionHandler:));
+        Method uploadDataReplacement = class_getInstanceMethod(sessionCls, @selector(zz_filter_uploadTaskWithRequest_fromData_completion:fromData:completionHandler:));
+        if (uploadDataOriginal && uploadDataReplacement) method_exchangeImplementations(uploadDataOriginal, uploadDataReplacement);
+
+        Method uploadFileOriginal = class_getInstanceMethod(sessionCls, @selector(uploadTaskWithRequest:fromFile:completionHandler:));
+        Method uploadFileReplacement = class_getInstanceMethod(sessionCls, @selector(zz_filter_uploadTaskWithRequest_fromFile_completion:fromFile:completionHandler:));
+        if (uploadFileOriginal && uploadFileReplacement) method_exchangeImplementations(uploadFileOriginal, uploadFileReplacement);
 
         Method originalDefault = class_getClassMethod(cls, @selector(defaultSessionConfiguration));
         Method replacementDefault = class_getClassMethod(cls, @selector(zz_filter_defaultSessionConfiguration));

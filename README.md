@@ -64,3 +64,20 @@ Open the product detail page, refresh the ZZFilterPlugin status, and check `任�
 
 ## v64 test focus
 本版首先用于确认 Actions 能完整编译通过。编译成功后再注入转转，继续观察 v63 的“网络响应 / 版本载荷”诊断结果。
+
+## v65 changes
+- 修正 v64 的核心诊断缺口：`网络响应 0` 说明仅靠 completionHandler 路径无法覆盖转转使用的自定义 `NSURLSession` delegate 数据流。
+- 新增被动 delegate 数据流观察：在 App 创建带 delegate 的 NSURLSession 时，对该 delegate 的 `URLSession:dataTask:didReceiveData:` 与 `URLSession:task:didCompleteWithError:` 做最小化运行时包装。
+- 对每个 data task 最多累计 1MB 响应数据，任务完成后复用现有版本载荷扫描逻辑；不主动创建请求、不修改响应内容。
+- 保留 `/v1/coke-real` 排除及现有候选 URL 逻辑。
+- 所有内部 helper/selector 均提前声明，继续强化 Clang 静态兼容性检查。
+
+
+## v66 changes
+- Analyzed the supplied SpiderProxy HAR archive: it contains HTTPS CONNECT tunnel metadata only, so it exposes destination hosts but not decrypted HTTP paths, request bodies, or response bodies.
+- Useful hosts observed in the capture include `app.zhuanzhuan.com`, `m.zhuanzhuan.com`, `v4.zhuanzhuan.com`, `v6.zhuanzhuan.com`, `lego.zhuanzhuan.com`, and `lego-tech.zhuanzhuan.com`; monitoring/telemetry hosts are kept as non-detail noise.
+- Added passive `NSURLSession` upload-task completion observation for `uploadTaskWithRequest:fromData:completionHandler:` and `fromFile:completionHandler:` because POST traffic may use upload tasks rather than data-task completion handlers.
+- Added passive delegate response-header observation for `URLSession:dataTask:didReceiveResponse:completionHandler:` and resets the per-task response buffer on a new response/redirect.
+- Existing delegate data accumulation and completion parsing remain passive and response-transparent.
+- Task census debug now records the request host explicitly, making it possible to map the app's observed candidate endpoint to the hosts seen in the proxy capture.
+- No active network probes and no response mutation were added.
